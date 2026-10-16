@@ -7,7 +7,7 @@ const fsp = fs.promises;
 const os = require('os');
 const path = require('path');
 const { columns, headerLine, rowLine, INTERVAL_HEADER } = require('./csv');
-const { isEmptyRaw } = require('./registers');
+const { isEmptyRaw, isPlausible } = require('./registers');
 
 const FILE_RE = /^lambda-wp-(\d{4})-(\d{2})-(\d{2})\.csv$/;
 
@@ -202,7 +202,7 @@ class HistoryStore {
         for (const k of Object.keys(values)) {
           const v = values[k];
           // Also drops "empty" register values (e.g. -3276.8 °C) written by older versions.
-          if (v.value == null || (v.dp.type !== 'EMGR' && isEmptyRaw(v.raw, v.dp.type))) { delete values[k]; continue; }
+          if (v.value == null || (v.dp.type !== 'EMGR' && isEmptyRaw(v.raw, v.dp.type)) || !isPlausible(v.value, v.dp)) { delete values[k]; continue; }
           if (v.dp.enum && v.text == null) v.text = v.dp.enum[v.raw] ?? `Unknown (${v.raw})`;
           delete v.dp;
         }

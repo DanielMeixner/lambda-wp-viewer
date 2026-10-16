@@ -59,6 +59,16 @@ To build locally, run `npm run dist`. The output goes to `dist/`.
   - Missing or failed values are never drawn, listed in tooltips, or replaced by an older value.
   - KPI tiles and gauges show **no data** when the latest sample lacks the value.
   - Register contents that mean "no value" (`0x8000` / `0x7FFF` for signed registers, `0xFFFF` for unsigned registers) are treated as missing, for example an unconnected sensor that would otherwise read −3276.8 °C. E-Manager power registers are excluded because their sign depends on the installation.
+  - **Implausible readings are hidden too**, so a broken sensor (e.g. −300 °C) can't squash the chart scale. Allowed ranges:
+    - temperatures −50…150 °C (solar collector up to 250 °C)
+    - offsets −50…50 K
+    - compressor 0…100 %
+    - volume flow −1…500 l/min
+    - heat output −100…200 kW
+    - power ±100 kW
+    - COP −1…30
+
+    In *All values*, such a reading shows as `–`; hover it to see the hidden raw value.
   - Such values are written to CSV as empty cells and ignored when history is loaded.
 
 ## Usage

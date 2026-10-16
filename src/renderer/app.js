@@ -26,6 +26,7 @@ const addr = (a) => String(a).padStart(4, '0');
 function fmt(d, v) {
   if (!v) return { html: '–', cls: 'na' };
   if (v.error) return { html: 'n/a', cls: 'bad', title: v.error };
+  if (v.implausible != null) return { html: '–', cls: 'na', title: `Implausible reading hidden: ${v.implausible} ${d.unit} (e.g. sensor broken or not connected)` };
   if (v.missing || v.value == null) return { html: '–', cls: 'na', title: `No value (register contains 0x${(v.raw & 0xffff).toString(16).toUpperCase()}, e.g. sensor not connected)` };
   if (d.enum) return { html: esc(v.text), cls: 'enum', title: `raw ${v.raw}` };
   return { html: `${v.value.toFixed(decimals(d.scale))}${d.unit ? ' ' + esc(d.unit) : ''}`, cls: '', title: `raw ${v.raw}` };

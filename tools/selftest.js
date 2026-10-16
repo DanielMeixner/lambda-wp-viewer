@@ -13,6 +13,16 @@ assert.strictEqual(decode(0xffff, { type: 'EMGR', scale: 1 }, { emanagerSigned: 
 // Empty register contents are "no value", never a measurement.
 assert.ok(decode(0x8000, { type: 'INT16', scale: 0.1 }).missing);
 assert.strictEqual(decode(0x8000, { type: 'INT16', scale: 0.1 }).value, null);
+// Implausible readings (e.g. -300 °C from a broken sensor) are hidden, plausible ones kept.
+{
+  const t = { key: 'tFlow', type: 'INT16', scale: 0.1, unit: '°C' };
+  const bad = decode((-3000) & 0xffff, t);
+  assert.ok(bad.missing && bad.value === null && bad.implausible === -300);
+  assert.strictEqual(decode(455, t).value, 45.5);
+  assert.strictEqual(decode(2000, { ...t, key: 'tCollector' }).value, 200);
+  assert.strictEqual(decode(15000, { key: 'compressor', type: 'UINT16', scale: 0.01, unit: '%' }).value, null);
+  assert.strictEqual(decode(5000, { key: 'state', type: 'UINT16', scale: 1, unit: '', enum: {} }).implausible, undefined);
+}
 assert.ok(decode(0x7fff, { type: 'INT16', scale: 0.01 }).missing);
 assert.ok(decode(0xffff, { type: 'UINT16', scale: 1, enum: { 1: 'X' } }).missing);
 assert.ok(!decode(0xfffe, { type: 'INT16', scale: 0.1 }).missing);

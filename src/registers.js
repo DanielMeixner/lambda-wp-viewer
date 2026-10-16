@@ -184,6 +184,26 @@ function isEmptyRaw(raw, type) {
   return type === 'UINT16' ? u === 0xffff : u === 0x8000 || u === 0x7fff;
 }
 
+// Physically plausible range per datapoint. Readings outside it (e.g. -300 °C from a broken or
+// unconnected sensor) are treated as "no value", so they are never shown and don't distort chart scales.
+function plausibleRange(d) {
+  if (d.enum) return null;
+  if (d.key === 'tCollector') return [-50, 250]; // solar collectors can reach stagnation temperatures
+  if (d.unit === '°C') return [-50, 150];
+  if (d.unit === 'K') return [-50, 50];
+  if (d.unit === '%') return [0, 100];
+  if (d.unit === 'l/min') return [-1, 500];
+  if (d.unit === 'kW') return [-100, 200];
+  if (d.unit === 'W') return [-100000, 100000];
+  if (d.key === 'cop') return [-1, 30];
+  return null;
+}
+
+const isPlausible = (value, d) => {
+  const r = plausibleRange(d);
+  return !r || (value >= r[0] && value <= r[1]);
+};
+
 function decode(raw, dpDef, config) {
   let type = dpDef.type;
   if (type === 'EMGR') type = config?.emanagerSigned ? 'INT16' : 'UINT16';
@@ -192,6 +212,7 @@ function decode(raw, dpDef, config) {
   // E-Manager registers are signed or unsigned depending on the installation, so 0xFFFF may mean -1 there.
   if (dpDef.type !== 'EMGR' && isEmptyRaw(v, type)) return { raw: v, value: null, text: null, missing: true };
   const value = Math.round(v * dpDef.scale * 1000) / 1000;
+  if (!isPlausible(value, dpDef)) return { raw: v, value: null, text: null, missing: true, implausible: value };
   return { raw: v, value, text: dpDef.enum ? (dpDef.enum[v] ?? `Unknown (${v})`) : null };
 }
 
@@ -199,4 +220,4 @@ function decode(raw, dpDef, config) {
 // Real LAMBDA controllers use index 0-5 only, so these addresses answer with an exception there.
 const SIM_MARKER = { address: 9998, words: [0x5349, 0x4d21] };
 
-module.exports = { SIM_MARKER, MODULE_TYPES, address, blocks, buildInstances, decode, isEmptyRaw };
+module.exports = { SIM_MARKER, MODULE_TYPES, address, blocks, buildInstances, decode, isEmptyRaw, isPlausible, plausibleRange };

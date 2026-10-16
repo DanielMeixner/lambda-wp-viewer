@@ -5,20 +5,10 @@
 // from a configured module (all 0, all 0xFFFF/0x8000, invalid states, impossible temperatures).
 // Modules of one type are numbered without gaps (subindex 0, 1, 2, ...), so probing stops at the first absent slot.
 const ModbusRTU = require('modbus-serial');
-const { MODULE_TYPES, address, blocks, decode } = require('./registers');
+const { MODULE_TYPES, address, blocks, decode, plausibleRange } = require('./registers');
 
 const EMPTY = new Set([0x0000, 0xffff, 0x8000, 0x7fff]);
 
-function rangeFor(d) {
-  if (d.unit === '°C') return [-50, 150];
-  if (d.unit === 'K') return [-50, 50];
-  if (d.unit === '%') return [0, 100];
-  if (d.unit === 'l/min') return [-1, 500];
-  if (d.unit === 'kW') return [-100, 200];
-  if (d.unit === 'W') return [-100000, 100000];
-  if (d.key === 'cop') return [-1, 30];
-  return null;
-}
 
 // Judges one slot from its "live" datapoints (numbers < 50). Returns { present, reason, sample }.
 function judge(type, raws) {
@@ -34,6 +24,7 @@ function judge(type, raws) {
     const raw = raws[d.number];
     const dec = decode(raw, d, {});
     sample[d.key] = d.enum ? dec.text : dec.value;
+    if (dec.implausible != null) { checked++; problems.push(`${d.name} = ${dec.implausible} ${d.unit} is implausible`); continue; }
     if (dec.missing) { checked++; problems.push(`${d.name} has no value`); continue; }
     if (d.enum && d.type !== 'EMGR') {
       checked++;
@@ -41,7 +32,7 @@ function judge(type, raws) {
       else problems.push(`${d.name} = ${raw} is not a valid state`);
       continue;
     }
-    const r = rangeFor(d);
+    const r = plausibleRange(d);
     if (!r) continue;
     checked++;
     if (dec.value >= r[0] && dec.value <= r[1]) plausible++;
