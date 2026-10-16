@@ -1,0 +1,78 @@
+{
+  "name": "lambda-wp-viewer",
+  "version": "1.0.0",
+  "description": "Read-only Modbus TCP viewer for LAMBDA heat pumps (Electron)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "simulator": "node tools/simulator.js",
+    "test": "node tools/selftest.js",
+    "dist": "electron-builder --publish never"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "modbus-serial": "^8.0.25"
+  },
+  "devDependencies": {
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "LAMBDA Heat Pump Viewer",
+  "author": "Daniel Meixner",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DanielMeixner/lambda-wp-viewer.git"
+  },
+  "build": {
+    "appId": "de.lambda-wp.viewer",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "LAMBDA-Viewer-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  }
+}

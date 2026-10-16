@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>LAMBDA Heat Pump Viewer</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="../../assets/icon.png" />
+</head>
+<body>
+  <header>
+    <h1><img class="logo" src="../../assets/icon.png" alt="λ" />LAMBDA Heat Pump Viewer <span class="ro">read-only</span></h1>
+    <nav>
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="dashboard">All values</button>
+      <button data-tab="trends">Trends</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="status">
+      <span id="statusDot" class="dot"></span>
+      <span id="statusText">Stopped</span>
+      <span id="lastUpdate"></span>
+      <button type="button" id="saveIndicator" class="save-ind none" title="Data folder status">💾 Not saved</button>
+      <button id="btnStart">Connect</button>
+      <button id="btnStop" disabled>Disconnect</button>
+      <button type="button" data-open-search title="Find the heat pump on your network">🔍 Search</button>
+    </div>
+  </header>
+  <div id="sourceBanner" class="banner none" role="status" aria-live="polite">
+    <span class="banner-icon">●</span>
+    <span class="banner-title">NOT CONNECTED</span>
+    <span id="deviceName" class="banner-device" hidden></span>
+    <span class="banner-text">No data source. Click Connect to read data from the heat pump.</span>
+  </div>
+
+  <main>
+    <section id="tab-overview" class="tab active">
+      <div class="toolbar">
+        <label>Chart window
+          <select id="overviewWindow">
+            <option value="300000">5 min</option>
+            <option value="1800000" selected>30 min</option>
+            <option value="3600000">1 h</option>
+            <option value="21600000">6 h</option>
+            <option value="86400000">24 h</option>
+            <option value="604800000">7 days</option>
+            <option value="2592000000">30 days</option>
+            <option value="0">All</option>
+          </select>
+        </label>
+        <span id="historyChip" class="history-chip" hidden></span>
+        <span id="historyNote" class="muted">Charts are built from data polled in this session.</span>
+      </div>
+      <div id="overview" class="data-area"></div>
+    </section>
+
+    <section id="tab-dashboard" class="tab">
+      <div class="toolbar">
+        <button id="btnExport">Export CSV</button>
+        <button id="btnLog">Start continuous log…</button>
+        <span id="logInfo" class="muted"></span>
+        <button id="btnClear">Clear session data</button>
+        <span id="sampleCount" class="muted"></span>
+      </div>
+      <div id="cards" class="cards data-area"></div>
+    </section>
+
+    <section id="tab-trends" class="tab">
+      <div class="trends-layout">
+        <aside>
+          <div class="toolbar">
+            <label>Window
+              <select id="trendWindow">
+                <option value="300000">5 min</option>
+                <option value="1800000">30 min</option>
+                <option value="3600000" selected>1 h</option>
+                <option value="21600000">6 h</option>
+                <option value="86400000">24 h</option>
+                <option value="604800000">7 days</option>
+                <option value="2592000000">30 days</option>
+                <option value="0">All</option>
+              </select>
+            </label>
+            <button id="btnTrendNone">None</button>
+          </div>
+          <div id="trendPicker"></div>
+        </aside>
+        <div class="chart-wrap data-area"><canvas id="chart"></canvas></div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <form id="settingsForm">
+        <fieldset>
+          <legend>Connection (Modbus TCP)</legend>
+          <label>IP address / host <span class="host-row"><input name="host" required /><button type="button" class="btn-search" data-open-search>🔍 Search device…</button></span></label>
+          <label>Port <input name="port" type="number" min="1" max="65535" /></label>
+          <label>Unit ID <input name="unitId" type="number" min="0" max="255" /></label>
+          <label>Poll interval – window open (s) <input name="pollIntervalSec" type="number" min="1" max="55" step="1" /></label>
+          <label>Timeout (ms) <input name="timeoutMs" type="number" min="200" step="100" /></label>
+          <label>Max. session samples <input name="maxSamples" type="number" min="100" step="100" /></label>
+          <p class="muted">The device closes connections after 1 min without requests, so the interval with the window open is limited to 55 s. The background interval is set below.</p>
+        </fieldset>
+        <fieldset>
+          <legend>☁ OneDrive data folder (history)</legend>
+          <label>Folder <span class="host-row"><input name="dataFolder" placeholder="No folder selected" spellcheck="false" /><button type="button" id="btnChooseFolder">📁 Choose…</button></span></label>
+          <div id="folderInfo" class="folder-info muted"></div>
+          <label class="inline"><input type="checkbox" name="storeEnabled" /> Save every data query to this folder (one row per poll)</label>
+          <label>History to load (days) <input name="historyDays" type="number" min="1" max="365" step="1" /></label>
+          <label class="inline"><input type="checkbox" name="loadHistoryOnStart" /> Load history from this folder when the app starts</label>
+          <div class="folder-actions">
+            <button type="button" id="btnLoadHistory">⟳ Load history now</button>
+            <button type="button" id="btnOpenFolder">Open folder</button>
+            <span id="historyStatus" class="muted"></span>
+          </div>
+          <p class="muted">Pick a folder inside your synced OneDrive (e.g. <code>~/Library/CloudStorage/OneDrive-Personal/LambdaWP</code>). The OneDrive app uploads the files, so the app needs no sign-in.
+            One CSV file per day is written (<code>lambda-wp-YYYY-MM-DD.csv</code>). Simulated data goes to the <code>simulated/</code> subfolder and is never loaded as history.</p>
+        </fieldset>
+        <fieldset>
+          <legend>🖥 Background collection</legend>
+          <label class="inline"><input type="checkbox" name="runInBackground" /> <span>Keep collecting and saving when the window is closed (icon stays in the <span class="tray-place">menu bar / taskbar</span>)</span></label>
+          <label>Poll interval – in the background (min) <input name="backgroundPollMin" type="number" min="0.5" max="1440" step="0.5" /></label>
+          <label class="inline"><input type="checkbox" name="autoStart" /> Start with my computer – in the background, without a window, and start collecting</label>
+          <label class="inline"><input type="checkbox" name="connectOnStart" /> Connect automatically when the app is opened</label>
+          <div id="backgroundInfo" class="muted"></div>
+          <p class="muted">In the background the app reads the heat pump at the background interval (default every 5 min; with the window open it uses the normal poll interval, default 5 s) and saves every query to the data folder. Opening the window shows the full history from the data folder.
+            Use the tray icon to open the window, start/stop collecting or quit.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Installed modules</legend>
+          <div class="detect-row">
+            <button type="button" id="btnDetectModules">🔎 Detect from heat pump</button>
+            <span id="detectStatus" class="muted">Reads the device (read-only) and finds out which modules are installed.</span>
+          </div>
+          <div id="detectResult" hidden></div>
+          <div id="moduleCounts"></div>
+          <label class="inline"><input type="checkbox" name="emanagerSigned" /> E-Manager register 0102 is signed (excess power, INT16) instead of input power (UINT16)</label>
+          <p class="muted">Module numbering follows the order in the heat pump's configuration module (lower Nr. → lower subindex).
+            Heating circuits 11–12 need subindex 10–11, which the PDF's single-digit addressing scheme does not cover. They are read at index·1000 + subindex·100 + number and may not work.</p>
+        </fieldset>
+        <button type="submit">Save settings</button>
+        <span id="saveInfo" class="muted"></span>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="searchDialog">
+    <form method="dialog" id="searchForm">
+      <h2>Search for heat pump</h2>
+      <p class="muted">Scans your local network for devices with an open Modbus TCP port and identifies LAMBDA heat pumps using read-only requests.
+        Requirement: Modbus TCP is enabled on the heat pump display and it's on the same network as this computer.</p>
+      <div class="search-opts">
+        <label>Subnet(s) <input name="subnets" placeholder="auto" title="Comma separated, e.g. 192.168.178.0/24. Leave empty to scan your own network(s)." /></label>
+        <label>Port <input name="port" type="number" min="1" max="65535" value="502" /></label>
+        <label>Unit ID <input name="unitId" type="number" min="0" max="255" value="1" /></label>
+      </div>
+      <div class="muted" id="searchSubnetsInfo"></div>
+      <div class="search-progress"><progress id="searchProgress" value="0" max="1"></progress><span id="searchStatus" class="muted">Ready</span></div>
+      <ul id="searchResults" class="search-results"></ul>
+      <div class="dialog-actions">
+        <button type="button" id="btnSearchStart" class="primary">Start search</button>
+        <button type="button" id="btnSearchCancel" disabled>Stop</button>
+        <button value="close">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="../../node_modules/chart.js/dist/chart.umd.js"></script>
+  <script src="chartUtil.js"></script>
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
