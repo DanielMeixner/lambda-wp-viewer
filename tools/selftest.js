@@ -73,6 +73,7 @@ server.on('initialized', async () => {
   // Add a bogus datapoint to verify single-register fallback for unreadable addresses
   svc.instances[0].datapoints.push({ number: 5, key: 'bogus', name: 'bogus', type: 'INT16', scale: 1, unit: '', address: 5 });
   try {
+    await require('./mobile-selftest')();
     const got = await new Promise((resolve, reject) => {
       svc.once('data', resolve);
       svc.pollOnce().catch(reject);

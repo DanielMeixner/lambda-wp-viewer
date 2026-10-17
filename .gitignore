@@ -2,3 +2,11 @@ node_modules/
 dist/
 .DS_Store
 *.pdf
+
+# Rebuilt by npm run mobile:sync
+mobile/www/
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/assets/capacitor.plugins.json
+mobile/ios/App/App/public/
+mobile/ios/App/App/capacitor.config.json

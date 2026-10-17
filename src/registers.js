@@ -220,4 +220,6 @@ function decode(raw, dpDef, config) {
 // Real LAMBDA controllers use index 0-5 only, so these addresses answer with an exception there.
 const SIM_MARKER = { address: 9998, words: [0x5349, 0x4d21] };
 
-module.exports = { SIM_MARKER, MODULE_TYPES, address, blocks, buildInstances, decode, isEmptyRaw, isPlausible, plausibleRange };
+const registerApi = { SIM_MARKER, MODULE_TYPES, address, blocks, buildInstances, decode, isEmptyRaw, isPlausible, plausibleRange };
+if (typeof module !== 'undefined' && module.exports) module.exports = registerApi;
+else window.LwpRegisters = registerApi;

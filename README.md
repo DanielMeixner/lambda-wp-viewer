@@ -1,6 +1,6 @@
 # LAMBDA Heat Pump Viewer
 
-A read-only desktop viewer for LAMBDA heat pumps. It reads the heat pump over Modbus TCP and runs locally with no server. Built with Electron, [`modbus-serial`](https://www.npmjs.com/package/modbus-serial) and [Chart.js](https://www.chartjs.org/).
+A read-only viewer for LAMBDA heat pumps on desktop, Android and iOS. It reads the heat pump over Modbus TCP and runs locally with no server. The desktop app uses Electron and [`modbus-serial`](https://www.npmjs.com/package/modbus-serial); the mobile apps use Capacitor with native, read-only TCP clients. Charts use [Chart.js](https://www.chartjs.org/).
 
 The register map follows *"Modbus Beschreibung und Protokoll"* (09.09.2021, published by LAMBDA Wärmepumpen; the PDF is not part of this repository).
 
@@ -12,16 +12,49 @@ Get the installer for your system from the [latest release](https://github.com/D
 | macOS (Intel + Apple Silicon) | `LAMBDA-Viewer-<version>-mac-universal.dmg` | The app is not code-signed. On first start, right-click → **Open**, or allow it under *System Settings → Privacy & Security*. |
 | Windows | `LAMBDA-Viewer-<version>-win-x64.exe` | SmartScreen may warn: click **More info → Run anyway**. |
 | Linux | `LAMBDA-Viewer-<version>-linux-x86_64.AppImage` | `chmod +x` the file, then run it. |
+| Android | `lambda-wp-viewer-android-development.apk` | Installable development build; allow installation from your browser/file manager when prompted. Prefer the optional `lambda-wp-viewer-android-release.apk` when available. |
+| iOS | `lambda-wp-viewer-ios-unsigned.xcarchive.zip` | Xcode archive for signing/export, **not directly installable** on an iPhone. An optional `lambda-wp-viewer-ios-signed.ipa` is published when Apple signing is configured; installation is restricted by its provisioning profile. |
+
+### Mobile (Android / iPhone / iPad)
+
+- Connect your phone to the same Wi-Fi/LAN as the heat pump. Enable Modbus TCP on the heat pump display. On iOS, allow **Local Network** access when prompted (or in Settings → Privacy & Security → Local Network).
+- Open **Settings**, enter the heat pump's IP address, port (usually 502), unit ID (usually 1) and installed module counts, then **Save settings** and **Connect**.
+- The mobile app shows all configured register values and a selectable session trend, using the same scaling, state labels and missing/implausible-value checks as desktop. Simulator readings are clearly labelled.
+- Mobile is **live-only**: no OneDrive, CSV files, history import, network discovery, automatic module detection, login startup or background collection. Connection settings are saved locally; readings stay in memory (up to 720 samples) and disappear when the app process ends or settings are saved.
+- Polling pauses when the app is backgrounded and resumes when foregrounded if still connected. Disconnected/paused readings are marked outdated; missing readings and gaps are not connected in the trend.
+- Android development APKs use a development signing key, which can change between CI runs. You may need to uninstall the previous development build before installing another (this removes its settings). For stable updates, configure release signing below and keep the same key.
+- iOS does not allow arbitrary unsigned downloads to be installed. For personal use, build the project in Xcode with your Apple development team and run it on your device. Distribution needs an appropriate Apple certificate and provisioning profile; an ad-hoc/release-testing IPA only works on registered devices. App Store/TestFlight distribution still requires Apple's upload/review process.
 
 ### Building a release
-Pushing a tag such as `v1.0.1` starts `.github/workflows/release.yml`. It runs the tests and builds the installers on macOS, Windows and Linux with [electron-builder](https://www.electron.build/), then publishes them as a GitHub release:
+Pushing a tag such as `v1.0.1` starts `.github/workflows/release.yml`. It runs the tests, builds the desktop installers with [electron-builder](https://www.electron.build/) and builds Android and iOS artifacts, then publishes all downloads as a GitHub release:
 ```bash
 npm version patch          # bumps package.json and creates the tag
 git push --follow-tags
 ```
 To build locally, run `npm run dist`. The output goes to `dist/`.
 
-## Features
+The workflow can also be run manually to produce downloadable Actions artifacts without publishing a release. Mobile builds require Node.js 22+, Java 21 / Android SDK for Android, and macOS with Xcode 26+ for iOS.
+
+```bash
+npm ci
+npm run mobile:android     # builds/copies web assets, syncs, opens Android Studio
+npm run mobile:ios         # builds/copies web assets, syncs, opens Xcode (macOS)
+```
+
+For command-line Android development builds, run `npm run mobile:sync`, then `./gradlew assembleDebug` inside `mobile/android`. The APK is in `mobile/android/app/build/outputs/apk/debug/`. For iOS, open `mobile/ios/App/App.xcodeproj`, select the App target and your signing team, and run on a device. The native app identifier is `de.lambda.wp.viewer`.
+
+#### Optional release signing
+
+Without signing secrets, CI still publishes the installable Android development APK and the unsigned iOS archive. Never commit signing keys or provisioning profiles.
+
+| Platform | GitHub repository Actions secrets | Purpose |
+|---|---|---|
+| Android | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Base64-encoded release keystore and its credentials; adds a signed release APK. Keep the same keystore for updates. |
+| iOS | `IOS_CERTIFICATE_BASE64`, `IOS_CERTIFICATE_PASSWORD`, `IOS_PROVISION_PROFILE_BASE64`, `IOS_TEAM_ID` | Base64-encoded distribution certificate (`.p12`, including private key), password, distribution provisioning profile and Apple team ID; adds a signed IPA. Use an explicit bundle ID in the profile. |
+
+Set all four secrets for each platform, or leave all four unset. iOS defaults to Xcode's `release-testing` export method (registered devices); repository variable `IOS_EXPORT_METHOD` can select another supported method matching your profile. Advanced exports can supply a base64-encoded export-options plist using secret `IOS_EXPORT_OPTIONS_PLIST_BASE64`. App Store exports are for upload, not direct installation from GitHub. Signing material is removed from the runner after use.
+
+## Desktop features
 - Shows **every documented datapoint**:
   - Ambient and E-Manager
   - Heat pump 1–3, Boiler 1–5, Buffer 1–5, Solar 1–2
@@ -214,6 +247,9 @@ src/csv.js              CSV export / continuous logger
 src/main.js, preload.js Electron main process (tray, background mode) + IPC bridge
 src/autostart.js        "Start with my computer" (LaunchAgent / login item / XDG autostart)
 src/renderer/           UI (dashboard, trends, settings); chartUtil.js holds shared axis/period/gap helpers
+src/mobile/             touch-friendly live-only UI and polling; shares src/registers.js with desktop
+mobile/                 Capacitor config and native Android/iOS projects (read-only ModbusReader plugins)
+tools/build-mobile.js   copies mobile UI, register map and local runtime/chart assets to mobile/www
 tools/simulator.js      local Modbus TCP simulator
 tools/selftest.js       headless test
 tools/make-icons.js     generates the λ (lambda) app / tray icons in assets/ (node tools/make-icons.js)

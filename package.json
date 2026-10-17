@@ -7,7 +7,11 @@
     "start": "electron .",
     "simulator": "node tools/simulator.js",
     "test": "node tools/selftest.js",
-    "dist": "electron-builder --publish never"
+    "dist": "electron-builder --publish never",
+    "mobile:build": "node tools/build-mobile.js",
+    "mobile:sync": "npm run mobile:build && cd mobile && cap sync",
+    "mobile:android": "npm run mobile:sync && cd mobile && cap open android",
+    "mobile:ios": "npm run mobile:sync && cd mobile && cap open ios"
   },
   "license": "MIT",
   "dependencies": {
@@ -15,6 +19,10 @@
     "modbus-serial": "^8.0.25"
   },
   "devDependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/cli": "8.5.3",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3",
     "electron": "^44.8.0",
     "electron-builder": "^26.15.3"
   },
