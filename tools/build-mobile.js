@@ -2,6 +2,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const version = require(path.join(root, 'package.json')).version;
+const iosVersion = version.split('-')[0];
+const gradle = path.join(root, 'mobile', 'android', 'app', 'build.gradle');
+fs.writeFileSync(gradle, fs.readFileSync(gradle, 'utf8')
+  .replace(/versionName "[^"]+"/, `versionName "${version}"`));
+const xcodeProject = path.join(root, 'mobile', 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
+fs.writeFileSync(xcodeProject, fs.readFileSync(xcodeProject, 'utf8')
+  .replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${iosVersion};`));
 const output = path.join(root, 'mobile', 'www');
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });

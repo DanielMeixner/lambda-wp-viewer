@@ -21,7 +21,7 @@ public class ModbusReaderPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             let port = try integer(call.options["port"], fallback: 502, min: 1, max: 65535)
             let unit = try integer(call.options["unitId"], fallback: 1, min: 0, max: 255)
-            let timeout = try integer(call.options["timeoutMs"], fallback: 3000, min: 200, max: 30000)
+            let timeout = try integer(call.options["timeoutMs"], fallback: 3000, min: 250, max: 30000)
             guard let input = call.options["blocks"] as? [[String: Any]],
                   (1...64).contains(input.count) else {
                 throw ReadError.invalid("blocks must contain 1 to 64 reads")

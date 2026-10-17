@@ -48,6 +48,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Test native read-only TCP protocol
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-test"
+          javac -d "$RUNNER_TEMP/native-test" \
+            mobile/android/app/src/main/java/de/lambda/wp/viewer/ModbusTcpReader.java \
+            mobile/tests/ModbusTcpReaderTest.java
+          java -cp "$RUNNER_TEMP/native-test" de.lambda.wp.viewer.ModbusTcpReaderTest
       - run: npm ci
       - run: npm run mobile:sync
       - name: Build development APK
@@ -267,4 +274,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
-            --title "LAMBDA Heat Pump Viewer $GITHUB_REF_NAME" --generate-notes
+            --title "LAMBDA Heat Pump Viewer $GITHUB_REF_NAME" \
+            --notes "Mobile apps show live data only (no OneDrive). Android: prefer the release APK when available; the development APK may require uninstalling a previous development build. iOS: the unsigned archive requires Xcode signing and cannot be installed directly. Signed IPAs only work with the devices/distribution permitted by their Apple provisioning profile. See the README for installation and signing instructions." \
+            --generate-notes

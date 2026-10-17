@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,7 +65,24 @@ public class ModbusTcpReaderTest {
             socket.getInputStream().readNBytes(12);
             check(socket.getInputStream().read() == -1, "Timeout closes connection");
         }, port -> expectFailure(port, 250));
-        System.out.println("Native Modbus TCP: 11 integration scenarios passed");
+        exchange(socket -> {
+            for (int transaction = 1; transaction <= 64; transaction++) {
+                byte[] request = socket.getInputStream().readNBytes(12);
+                check(request.length == 12
+                    && ((request[0] & 255) << 8 | (request[1] & 255)) == transaction,
+                    "Full 16-bit sequential transaction IDs");
+                socket.getOutputStream().write(new byte[] {
+                    request[0], request[1], 0, 0, 0, 5, 1, 3, 2, 0, 42
+                });
+            }
+            check(socket.getInputStream().read() == -1, "Large batch closes connection");
+        }, port -> {
+            var results = ModbusTcpReader.read("127.0.0.1", port, 1, 1000,
+                Collections.nCopies(64, new ModbusTcpReader.Block(9998, 1)));
+            check(results.size() == 64 && results.get(63).data()[0] == 42,
+                "All 64 fallback reads succeed");
+        });
+        System.out.println("Native Modbus TCP: 12 integration scenarios passed");
     }
 
     private static void expectFailure(int port, int timeout) throws Exception {

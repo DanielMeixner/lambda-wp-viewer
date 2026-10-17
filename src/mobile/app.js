@@ -5,7 +5,7 @@
   const { MODULE_TYPES } = LwpRegisters;
   const { DEFAULT_CONFIG, validateConfig, makePlan, LiveSession } = LwpMobile;
   const storageKey = 'lambda-mobile-config';
-  let config = structuredClone(DEFAULT_CONFIG);
+  let config = { ...DEFAULT_CONFIG, modules: { ...DEFAULT_CONFIG.modules } };
   let storageWarning = '';
   try {
     const stored = localStorage.getItem(storageKey);

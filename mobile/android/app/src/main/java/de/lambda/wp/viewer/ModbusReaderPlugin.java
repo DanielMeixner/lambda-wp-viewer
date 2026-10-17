@@ -26,7 +26,7 @@ public class ModbusReaderPlugin extends Plugin {
             }
             int port = integer(call.getData(), "port", 502, 1, 65535);
             int unit = integer(call.getData(), "unitId", 1, 0, 255);
-            int timeout = integer(call.getData(), "timeoutMs", 3000, 200, 30000);
+            int timeout = integer(call.getData(), "timeoutMs", 3000, 250, 30000);
             JSONArray input = call.getArray("blocks");
             if (input == null || input.length() < 1 || input.length() > 64) {
                 throw new IllegalArgumentException("blocks must contain 1 to 64 reads");
