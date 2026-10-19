@@ -158,7 +158,7 @@ In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick 
   - On start, or with **⟳ Load history now**, the last *N* days (setting **History to load**) are read from the folder and shown in all charts. Several devices or computers can share the folder.
   - Only the day folders in the requested range are read. Values are matched with the current module settings; unknown ones are ignored.
   - Large ranges are thinned out evenly to the *Max. session samples* setting; only that many files are actually read.
-  - The chart window widens automatically so the history is visible; *7 days* and *30 days* options were added.
+  - The chart window widens automatically so the history is visible; *2 days*, *7 days* and *30 days* options are available.
 - While only history is shown, the banner says **NOT CONNECTED – OUTDATED VALUES**.
 - The chip above the Overview charts shows how many stored samples were loaded and how many files were saved.
 - **Save indicator** in the header (visible on every tab):
