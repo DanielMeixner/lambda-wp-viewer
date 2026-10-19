@@ -45,6 +45,10 @@
         }
       ],
       "icon": "assets/icon.png",
+      "identity": "-",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Connect to your LAMBDA heat pump on the local network to read live Modbus data."
+      },
       "category": "public.app-category.utilities"
     },
     "win": {

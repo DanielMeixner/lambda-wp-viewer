@@ -9,9 +9,11 @@ Get the installer for your system from the [latest release](https://github.com/D
 
 | System | File | Notes |
 |---|---|---|
-| macOS (Intel + Apple Silicon) | `LAMBDA-Viewer-<version>-mac-universal.dmg` | The app is not code-signed. On first start, right-click → **Open**, or allow it under *System Settings → Privacy & Security*. |
+| macOS (Intel + Apple Silicon) | `LAMBDA-Viewer-<version>-mac-universal.dmg` | The app is ad-hoc signed, not Developer ID signed or notarized. On first start, right-click → **Open**, or allow it under *System Settings → Privacy & Security*. |
 | Windows | `LAMBDA-Viewer-<version>-win-x64.exe` | SmartScreen may warn: click **More info → Run anyway**. |
 | Linux | `LAMBDA-Viewer-<version>-linux-x86_64.AppImage` | `chmod +x` the file, then run it. |
+
+On macOS, allow **LAMBDA Heat Pump Viewer** under **System Settings → Privacy & Security → Local Network**. This permission is separate from the development Electron app. The macOS build explicitly re-signs the app with its own bundle identity and includes a local-network usage description; retaining Electron's original executable signature can cause local-network permission to be attributed incorrectly and connections to fail with `EHOSTUNREACH`.
 
 ### Building a release
 Pushing a tag such as `v1.0.1` starts `.github/workflows/release.yml`. It runs the tests and builds the installers on macOS, Windows and Linux with [electron-builder](https://www.electron.build/), then publishes them as a GitHub release:
