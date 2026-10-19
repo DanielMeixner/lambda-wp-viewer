@@ -197,6 +197,21 @@ server.on('initialized', async () => {
     assert.strictEqual(thin.samples[1].ts, t0 + 260000, 'thinning keeps the newest sample');
     const sim = await store.load({ from: t0 - 3600000, to: t0 + 3600000, source: 'simulator', instances: hInst });
     assert.deepStrictEqual(sim.samples.map((x) => x.values['heatpump1.tFlow'].value), [99]);
+    // Converting legacy CSV files: one JSON file per row, CSV moved to converted-csv/, no duplicates.
+    {
+      const { convertFolder } = require('./csv2json');
+      const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'lwp-conv-'));
+      fs.writeFileSync(path.join(cdir, 'lambda-wp-2026-01-11.csv'), headerLine(cols) + '\n' + rowLine(cols, mk(t0 + 240000, 34)) + '\n' + rowLine(cols, mk(t0 + 250000, 35)) + '\n');
+      const tot = await convertFolder(cdir, { log: () => {} });
+      assert.deepStrictEqual([tot.rows, tot.written], [2, 2]);
+      assert.deepStrictEqual(fs.readdirSync(path.join(cdir, 'converted-csv')), ['lambda-wp-2026-01-11.csv']);
+      const conv = await store.load.call(Object.assign(new HistoryStore(), { folder: cdir }), { from: 0, to: t0 + 3600000, instances: hInst });
+      assert.deepStrictEqual(conv.samples.map((x) => x.values['heatpump1.tFlow'].value), [34, 35]);
+      assert.strictEqual(conv.samples[0].values['heatpump1.hpState'].text, 'REGULATION');
+      assert.deepStrictEqual([conv.jsonFiles, conv.csvFiles], [2, 0]);
+      fs.rmSync(cdir, { recursive: true, force: true });
+      console.log('csv2json: legacy CSV converted to JSON files OK');
+    }
     fs.rmSync(dir, { recursive: true, force: true });
 
     // Background polling: long intervals close the connection after each poll (the device drops idle

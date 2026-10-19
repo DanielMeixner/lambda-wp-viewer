@@ -153,6 +153,7 @@ In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick 
   - `values` holds scaled values keyed by `<module id>.<datapoint>`. Missing, failed or implausible readings are left out.
   - Simulated data is written to the `simulated/` subfolder and is never loaded as history.
   - Daily CSV files from older versions (`lambda-wp-YYYY-MM-DD.csv`) stay in the folder and are still loaded as history.
+  - To convert them to the JSON format, run `node tools/csv2json.js "<data folder>"` (add `--dry-run` to only count). Every row becomes one JSON file, and the CSV files are moved to `converted-csv/` so they aren't loaded twice. Existing JSON files are never overwritten.
 - **History**:
   - On start, or with **⟳ Load history now**, the last *N* days (setting **History to load**) are read from the folder and shown in all charts. Several devices or computers can share the folder.
   - Only the day folders in the requested range are read. Values are matched with the current module settings; unknown ones are ignored.
