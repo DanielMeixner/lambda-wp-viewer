@@ -146,39 +146,57 @@ server.on('initialized', async () => {
       'heatpump1.hpState': { raw: 7, value: 7, text: 'REGULATION' },
       'ambient.actual': { raw: 55, value: 5.5, text: null },
     } });
-    const t0 = new Date(2026, 0, 10, 23, 58).getTime();
+    const t0 = new Date(2026, 0, 10, 23, 58, 5, 42).getTime();
     assert.ok(store.write({ ...mk(t0, 30), intervalMs: 300000 }));
+    // Every save creates a new JSON file in YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/.
+    const f0 = path.join(dir, '2026', '2026-01', '2026-01-10', '2026-01-10-23', '2026-01-10-23-58', '2026-01-10-23-58-05-042.json');
+    assert.strictEqual(store.status().lastFile, f0);
+    const doc = JSON.parse(fs.readFileSync(f0, 'utf8'));
+    assert.strictEqual(doc.timestamp, new Date(t0).toISOString());
+    assert.strictEqual(doc.source, 'device');
+    assert.strictEqual(doc.pollIntervalSec, 300);
+    assert.deepStrictEqual(doc.values, { 'heatpump1.tFlow': 30, 'heatpump1.hpState': 7, 'ambient.actual': 5.5 });
+    assert.deepStrictEqual(doc.text, { 'heatpump1.hpState': 'REGULATION' });
+    assert.strictEqual(doc.units['heatpump1.tFlow'], '°C');
+    assert.strictEqual(doc.modules.heatpump1, store.instances.find((x) => x.id === 'heatpump1').name);
     assert.ok(store.write(mk(t0 + 10000, 31)), 'every query is saved');
     assert.strictEqual(store.status().rowsWritten, 2);
     assert.strictEqual(store.status().lastSampleTs, t0 + 10000);
     assert.ok(store.write(mk(t0 + 60000, 32)));
-    assert.ok(store.write(mk(t0 + 180000, 33)), 'next day goes to a new file');
+    assert.ok(store.write(mk(t0 + 180000, 33)), 'next day goes to a new day folder');
+    assert.ok(fs.existsSync(path.join(dir, '2026', '2026-01', '2026-01-11', '2026-01-11-00', '2026-01-11-00-01')));
     assert.ok(store.write(mk(t0 + 300000, 99, 'simulator')));
-    // A module configuration change appends a new header; old columns stay readable.
-    const store2 = new HistoryStore();
-    store2.configure({ folder: dir, enabled: true, instances: buildInstances({ modules: { ambient: 1, heatpump: 1, boiler: 1 } }) });
-    assert.ok(store2.write(mk(t0 + 240000, 34)));
-    assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['lambda-wp-2026-01-10.csv', 'lambda-wp-2026-01-11.csv', 'simulated']);
-    assert.strictEqual(fs.readFileSync(path.join(dir, 'lambda-wp-2026-01-11.csv'), 'utf8').split('\ntimestamp,').length, 2);
+    assert.ok(fs.existsSync(path.join(dir, 'simulated', '2026', '2026-01', '2026-01-11')));
+    // Daily CSV files from older versions are still read as history.
+    const { columns, headerLine, rowLine } = require('../src/csv');
+    const cols = columns(hInst);
+    fs.writeFileSync(path.join(dir, 'lambda-wp-2026-01-11.csv'), headerLine(cols) + '\n' + rowLine(cols, mk(t0 + 240000, 34)) + '\n');
+    assert.ok(!fs.readdirSync(path.join(dir, '2026', '2026-01', '2026-01-10', '2026-01-10-23', '2026-01-10-23-58')).some((f) => f.endsWith('.tmp')));
     const h = await store.load({ from: t0 - 3600000, to: t0 + 3600000, instances: hInst });
-    console.log(`history: ${h.samples.length} samples from ${h.files.length} files`);
+    console.log(`history: ${h.samples.length} samples (${h.jsonFiles} JSON files, ${h.csvFiles} CSV files)`);
     assert.deepStrictEqual(h.samples.map((x) => x.values['heatpump1.tFlow'].value), [30, 31, 32, 33, 34]);
     assert.strictEqual(h.samples[0].values['heatpump1.hpState'].text, 'REGULATION');
+    assert.strictEqual(h.samples[4].values['heatpump1.hpState'].text, 'REGULATION');
     assert.strictEqual(h.samples[0].values['heatpump1.tFlow'].raw, 3000);
     assert.ok(h.samples.every((x) => x.source === 'device' && x.history));
     assert.strictEqual(h.samples[0].intervalMs, 300000, 'background interval is read back');
     assert.strictEqual(h.samples[1].intervalMs, undefined);
-    // Rows with an old-style "empty" value (-327.68 °C = 0x8000) or a missing value never come back as values.
+    // Missing values are not stored; implausible stored values (-327.68 °C) never come back as values.
     assert.ok(store.write(mk(t0 + 250000, -327.68)));
     const miss = mk(t0 + 260000, 0);
     miss.values['heatpump1.tFlow'] = { raw: -32768, value: null, text: null, missing: true };
     assert.ok(store.write(miss));
+    assert.ok(!('heatpump1.tFlow' in JSON.parse(fs.readFileSync(store.status().lastFile, 'utf8')).values));
+    // A broken / half-synced file is skipped.
+    fs.writeFileSync(path.join(path.dirname(store.status().lastFile), '2026-01-11-00-02-00-000.json'), '{"times');
     const h2 = await store.load({ from: t0 + 245000, to: t0 + 3600000, instances: hInst });
     assert.strictEqual(h2.samples.length, 2);
     assert.ok(h2.samples.every((x) => !('heatpump1.tFlow' in x.values) && x.values['ambient.actual'].value === 5.5));
     const thin = await store.load({ from: 0, to: t0 + 3600000, instances: hInst, maxSamples: 2 });
     assert.strictEqual(thin.samples.length, 2);
     assert.strictEqual(thin.samples[1].ts, t0 + 260000, 'thinning keeps the newest sample');
+    const sim = await store.load({ from: t0 - 3600000, to: t0 + 3600000, source: 'simulator', instances: hInst });
+    assert.deepStrictEqual(sim.samples.map((x) => x.values['heatpump1.tFlow'].value), [99]);
     fs.rmSync(dir, { recursive: true, force: true });
 
     // Background polling: long intervals close the connection after each poll (the device drops idle
@@ -203,6 +221,23 @@ server.on('initialized', async () => {
       assert.deepStrictEqual(statuses, [true], 'no disconnect events');
       bg.stop();
       console.log('background interval: reconnect per poll, immediate poll when the window opens OK');
+    }
+
+    // Watchdog: a device that accepts the connection but never answers must not stop the poll loop.
+    {
+      const net = require('net');
+      const silent = net.createServer((sock) => sock.on('error', () => {}));
+      await new Promise((r) => silent.listen(5029, '127.0.0.1', r));
+      const wd = new ModbusService();
+      wd.configure({ ...config, host: '127.0.0.1', port: 5029, timeoutMs: 60000, pollDeadlineMs: 300, pollIntervalMs: 200 });
+      const errors = [];
+      wd.on('status', (st) => { if (st.error) errors.push(st.error); });
+      wd.start();
+      await new Promise((r) => setTimeout(r, 1800));
+      wd.stop();
+      silent.close();
+      assert.ok(errors.filter((e) => /timed out/.test(e)).length >= 2, `poll loop keeps retrying after a hang: ${errors}`);
+      console.log(`watchdog: hung poll aborted and retried (${errors.length}x) OK`);
     }
 
     // Module detection against simulators with different installations and absent-slot behaviour.

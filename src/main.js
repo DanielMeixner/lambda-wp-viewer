@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, Notification, powerSaveBlocker, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { ModbusService } = require('./modbusService');
@@ -107,7 +107,14 @@ function setBackgroundInterval(ms) {
   updateTray(true);
 }
 
+function rememberCollecting(on) {
+  if (!!config.collecting === on) return;
+  config.collecting = on;
+  saveConfigFile();
+}
+
 function startCollecting() {
+  rememberCollecting(true);
   service.configure(config);
   applyPollInterval();
   service.start();
@@ -116,6 +123,7 @@ function startCollecting() {
   updateTray(true);
 }
 function stopCollecting() {
+  rememberCollecting(false);
   service.stop();
   lastStatus = { connected: false, error: null };
   send('modbus:running', false);
@@ -162,7 +170,7 @@ function saveLine() {
   if (!config.dataFolder) return 'Not saved – no data folder selected';
   if (!config.storeEnabled) return 'Saving to data folder is off';
   if (h.error) return `Save failed: ${h.error}`;
-  if (h.lastWrittenAt) return `Last saved ${new Date(h.lastWrittenAt).toLocaleTimeString()} · ${h.rowsWritten} rows this session`;
+  if (h.lastWrittenAt) return `Last saved ${new Date(h.lastWrittenAt).toLocaleTimeString()} · ${h.rowsWritten} files this session`;
   return 'Every poll will be saved to the data folder';
 }
 
@@ -259,7 +267,7 @@ async function loadHistory() {
       const max = Number(config.maxSamples) || 20000;
       if (samples.length > max) samples.splice(0, samples.length - max);
     }
-    return { ok: true, rows: r.samples.length, totalRows: r.totalRows || 0, files: r.files.length, days };
+    return { ok: true, rows: r.samples.length, totalRows: r.totalRows || 0, files: (r.jsonFiles || 0) + (r.csvFiles || 0), jsonFiles: r.jsonFiles || 0, csvFiles: r.csvFiles || 0, days };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -271,7 +279,7 @@ function registerIpc() {
   ipcMain.handle('config:get', () => config);
   ipcMain.handle('config:save', (_e, newConfig) => {
     const { autoStart, ...rest } = newConfig;
-    config = { ...DEFAULT_CONFIG, backgroundHintShown: config.backgroundHintShown, ...rest };
+    config = { ...DEFAULT_CONFIG, backgroundHintShown: config.backgroundHintShown, ...rest, collecting: config.collecting };
     saveConfigFile();
     if (autoStart !== undefined && autostart.supported && autoStart !== autostart.isEnabled()) setAutostart(autoStart);
     const wasRunning = service.running;
@@ -410,7 +418,11 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     if (process.platform === 'darwin') app.dock?.setIcon(nativeImage.createFromPath(path.join(ASSETS, 'icon.png')));
     createTray();
-    if (startedInBackground || config.connectOnStart || process.env.LWP_AUTOSTART) startCollecting();
+    // Resume collecting if it was running when the app was quit (update, crash, restart).
+    if (startedInBackground || config.connectOnStart || config.collecting || process.env.LWP_AUTOSTART) startCollecting();
+    // After sleep the old TCP connection is dead: reconnect and poll right away.
+    powerMonitor.on('resume', () => service.wake());
+    powerMonitor.on('unlock-screen', () => service.wake());
     if (!startedInBackground) createWindow();
   });
 

@@ -69,7 +69,7 @@ To build locally, run `npm run dist`. The output goes to `dist/`.
     - COP −1…30
 
     In *All values*, such a reading shows as `–`; hover it to see the hidden raw value.
-  - Such values are written to CSV as empty cells and ignored when history is loaded.
+  - Such values are written to CSV as empty cells, left out of the JSON files, and ignored when history is loaded.
 
 ## Usage
 ```bash
@@ -103,7 +103,7 @@ The app can keep reading and saving data without its window, so the charts show 
   - Every **5 min** in the background (*Poll interval – in the background*). You can change it in Settings or in the tray menu (*Background interval*: 1–60 min).
   - Opening the window polls immediately and switches to the fast interval; closing it switches back.
   - The device drops connections after 1 min without requests, so with intervals over 50 s the app connects for each poll and disconnects afterwards. The app still shows it as connected. After an error it retries within a minute.
-  - Each saved row records its poll interval (CSV column `poll interval [s]`). The charts use it so that 5-minute background spacing isn't shown as a gap; only pauses longer than 3× the interval (at least 30 s) appear as *no data*.
+  - Each saved row records its poll interval (`pollIntervalSec` in the JSON file). The charts use it so that 5-minute background spacing isn't shown as a gap; only pauses longer than 3× the interval (at least 30 s) appear as *no data*.
 - **Start with my computer:** starts the app at login in the background (`--background`), without a window, and begins collecting immediately.
   - macOS: a LaunchAgent `~/Library/LaunchAgents/de.lambda-wp.viewer.plist`
   - Windows: a login item
@@ -134,21 +134,37 @@ The PDF doesn't document how the controller answers for unconfigured modules, so
 
 In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick a folder inside your locally synced OneDrive, for example `~/Library/CloudStorage/OneDrive-Personal/LambdaWP` on macOS or `%OneDrive%\LambdaWP` on Windows. The OneDrive app uploads and downloads the files, so the app itself needs no Microsoft sign-in. Under the field, the app tells you whether the folder is inside OneDrive, local only, missing or not writable.
 
-- **Saving**: every data query (poll) is appended as one row to one CSV file per day, `lambda-wp-YYYY-MM-DD.csv`, in the same format as the CSV export. The poll interval therefore sets the resolution; at 5 s that is about 25 MB per day.
-  - If the module configuration changes, a new header line is added to the file.
+- **Saving**: every data query (poll) creates a new JSON file in a folder hierarchy by local date and time:
+
+  ```
+  <data folder>/YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/YYYY-MM-DD-HH-MM-SS-mmm.json
+  e.g.          2026/2026-10/2026-10-19/2026-10-19-09/2026-10-19-09-07/2026-10-19-09-07-26-123.json
+  ```
+
+  The file names contain no colons, so they work on Windows and OneDrive. Each file is written under a temporary name first and then renamed, so OneDrive never uploads a half-written file. Example content:
+
+  ```json
+  {"format":"lambda-wp-sample/1","timestamp":"2026-10-19T07:07:26.123Z","source":"device","pollIntervalSec":300,
+   "modules":{"heatpump1":"Heat pump 1"},"values":{"heatpump1.tFlow":39.34,"heatpump1.hpState":7},
+   "text":{"heatpump1.hpState":"REGULATION"},"units":{"heatpump1.tFlow":"°C"}}
+  ```
+
+  - `timestamp` (UTC, ISO 8601) is authoritative; the folder names are local time.
+  - `values` holds scaled values keyed by `<module id>.<datapoint>`. Missing, failed or implausible readings are left out.
   - Simulated data is written to the `simulated/` subfolder and is never loaded as history.
+  - Daily CSV files from older versions (`lambda-wp-YYYY-MM-DD.csv`) stay in the folder and are still loaded as history.
 - **History**:
   - On start, or with **⟳ Load history now**, the last *N* days (setting **History to load**) are read from the folder and shown in all charts. Several devices or computers can share the folder.
-  - Columns are matched by name with the current module settings; unknown columns are ignored.
-  - Large ranges are thinned out evenly to the *Max. session samples* setting.
+  - Only the day folders in the requested range are read. Values are matched with the current module settings; unknown ones are ignored.
+  - Large ranges are thinned out evenly to the *Max. session samples* setting; only that many files are actually read.
   - The chart window widens automatically so the history is visible; *7 days* and *30 days* options were added.
 - While only history is shown, the banner says **NOT CONNECTED – OUTDATED VALUES**.
-- The chip above the Overview charts shows how many stored samples were loaded and how many rows were saved.
+- The chip above the Overview charts shows how many stored samples were loaded and how many files were saved.
 - **Save indicator** in the header (visible on every tab):
 
   | Indicator | Meaning |
   |---|---|
-  | 🟢 **💾 Saved 14:37:05** (flashes on every write) | A row was just written. Hover to see the file and the number of rows written this session; click to open the folder. |
+  | 🟢 **💾 Saved 14:37:05** (flashes on every write) | A new JSON file was just written. Hover to see the file and the number of files written this session; click to open the folder. |
   | 🔵 **💾 Ready** | Folder set; the next query will be saved. |
   | 🟡 **💾 Not saved** | No folder selected. Data is only kept for this session; click to open Settings. |
   | ⚪ **💾 Saving off** | Saving is switched off in Settings. |
@@ -208,7 +224,7 @@ By default the simulator has 2 heat pumps, 1 boiler, 1 buffer, no solar module a
 src/registers.js        register map from the PDF + address/decoding helpers
 src/discovery.js       network search / device identification
 src/moduleDetect.js    detects installed modules by probing module slots
-src/historyStore.js    daily CSV files in the (OneDrive) data folder: write + load history
+src/historyStore.js    one JSON file per poll in the (OneDrive) data folder: write + load history
 src/modbusService.js    Modbus TCP poller (main process)
 src/csv.js              CSV export / continuous logger
 src/main.js, preload.js Electron main process (tray, background mode) + IPC bridge

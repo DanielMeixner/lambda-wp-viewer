@@ -1,21 +1,87 @@
 'use strict';
-// Stores samples as daily CSV files in a (OneDrive-synced) folder and reads them back as history.
-// Real device data:  <folder>/lambda-wp-YYYY-MM-DD.csv
-// Simulated data:    <folder>/simulated/lambda-wp-YYYY-MM-DD.csv (kept apart so history is never polluted)
+// Stores every sample as its own JSON file in a (OneDrive-synced) folder and reads them back as history.
+// Real device data:  <folder>/YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/YYYY-MM-DD-HH-MM-SS-mmm.json
+// Simulated data:    <folder>/simulated/YYYY/... (kept apart so history is never polluted)
+// Folder and file names use local time; the "timestamp" inside each file (UTC, ISO 8601) is authoritative.
+// Daily CSV files written by older versions (lambda-wp-YYYY-MM-DD.csv) are still read as history.
 const fs = require('fs');
 const fsp = fs.promises;
 const os = require('os');
 const path = require('path');
-const { columns, headerLine, rowLine, INTERVAL_HEADER } = require('./csv');
+const { INTERVAL_HEADER } = require('./csv');
 const { isEmptyRaw, isPlausible } = require('./registers');
 
 const FILE_RE = /^lambda-wp-(\d{4})-(\d{2})-(\d{2})\.csv$/;
+const JSON_RE = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{3})\.json$/;
+const FORMAT = 'lambda-wp-sample/1';
+
+const p2 = (n) => String(n).padStart(2, '0');
 
 function dayStamp(ts) {
   const d = new Date(ts);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
+
+// Local-time path parts: ['2026', '2026-10', '2026-10-19', '2026-10-19-09', '2026-10-19-09-07'] and file name.
+function jsonParts(ts) {
+  const d = new Date(ts);
+  const y = String(d.getFullYear());
+  const m = `${y}-${p2(d.getMonth() + 1)}`;
+  const day = `${m}-${p2(d.getDate())}`;
+  const h = `${day}-${p2(d.getHours())}`;
+  const min = `${h}-${p2(d.getMinutes())}`;
+  return { dirs: [y, m, day, h, min], file: `${min}-${p2(d.getSeconds())}-${String(d.getMilliseconds()).padStart(3, '0')}.json` };
+}
+
+function jsonFileFor(folder, source, ts) {
+  const { dirs, file } = jsonParts(ts);
+  return path.join(dirFor(folder, source), ...dirs, file);
+}
+
+// One sample as a self-describing JSON document. Values that are missing or failed are left out.
+function sampleToJson(sample, instances) {
+  const values = {};
+  const text = {};
+  const units = {};
+  const modules = {};
+  for (const inst of instances || []) {
+    for (const d of inst.datapoints) {
+      const key = `${inst.id}.${d.key}`;
+      const v = sample.values[key];
+      if (!v || v.error || v.missing || v.value == null) continue;
+      values[key] = v.value;
+      if (d.enum && v.text != null) text[key] = v.text;
+      if (d.unit) units[key] = d.unit;
+      modules[inst.id] = inst.name;
+    }
+  }
+  return {
+    format: FORMAT,
+    timestamp: new Date(sample.ts).toISOString(),
+    source: sample.source === 'simulator' ? 'simulator' : 'device',
+    pollIntervalSec: sample.intervalMs ? sample.intervalMs / 1000 : null,
+    modules,
+    values,
+    text,
+    units,
+  };
+}
+
+// Maps worker over items with limited concurrency (many small files on a synced folder).
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const run = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return out;
+}
+
+const readdirSafe = (dir) => fsp.readdir(dir).catch(() => []);
 
 function dirFor(folder, source) {
   return source === 'simulator' ? path.join(folder, 'simulated') : folder;
@@ -87,9 +153,7 @@ class HistoryStore {
   constructor() {
     this.folder = null;
     this.enabled = false;
-    this.cols = null;
-    this.headerKey = null;
-    this.checkedFiles = new Map(); // file -> header line known to be current at its end
+    this.instances = null;
     this.lastSampleTs = null;
     this.lastError = null;
     this.lastFile = null;
@@ -100,9 +164,7 @@ class HistoryStore {
   configure({ folder, enabled, instances }) {
     this.folder = folder || null;
     this.enabled = !!(folder && enabled);
-    this.cols = columns(instances);
-    const hl = headerLine(this.cols);
-    if (hl !== this.headerKey) { this.headerKey = hl; this.checkedFiles.clear(); }
+    this.instances = instances;
     this.lastError = null;
   }
 
@@ -119,25 +181,16 @@ class HistoryStore {
     };
   }
 
-  // Appends every sample (one row per poll). Returns true when the sample was written.
+  // Writes every sample (one poll) to a new JSON file. Returns true when the sample was written.
   write(sample) {
-    if (!this.enabled || !this.cols) return false;
-    const file = fileFor(this.folder, sample.source, sample.ts);
+    if (!this.enabled || !this.instances) return false;
+    const file = jsonFileFor(this.folder, sample.source, sample.ts);
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      if (this.checkedFiles.get(file) !== this.headerKey) {
-        // Append a header if the file is new or its last header differs (module configuration changed).
-        let last = null;
-        try {
-          const text = fs.readFileSync(file, 'utf8');
-          const idx = text.lastIndexOf('\ntimestamp,');
-          last = text.startsWith('timestamp,') && idx < 0 ? text.slice(0, text.indexOf('\n') + 1)
-            : idx >= 0 ? text.slice(idx + 1, text.indexOf('\n', idx + 1) + 1) : null;
-        } catch { /* new file */ }
-        if (last !== this.headerKey) fs.appendFileSync(file, this.headerKey);
-        this.checkedFiles.set(file, this.headerKey);
-      }
-      fs.appendFileSync(file, rowLine(this.cols, sample));
+      // Write to a temp name first so OneDrive / readers never see a half-written file.
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(sampleToJson(sample, this.instances)));
+      fs.renameSync(tmp, file);
       this.lastSampleTs = sample.ts;
       this.lastSource = sample.source;
       this.lastFile = file;
@@ -151,13 +204,38 @@ class HistoryStore {
     }
   }
 
-  // Reads stored samples between from..to (ms). Columns are matched by header against the current
-  // module configuration; unknown columns (e.g. removed modules) are ignored.
-  async load({ from, to = Date.now(), source = 'device', instances, maxSamples = 20000 }) {
-    if (!this.folder) return { samples: [], files: [] };
-    const dir = dirFor(this.folder, source);
+  // Lists stored JSON files between from..to (ms) without reading them: [{ file, ts }] sorted by time.
+  // Only the folders of the requested days are visited.
+  async listJson(dir, from, to) {
+    const days = [];
+    for (let d = new Date(new Date(from).setHours(0, 0, 0, 0)); d.getTime() <= to; d.setDate(d.getDate() + 1)) {
+      days.push(jsonParts(d.getTime()).dirs.slice(0, 3));
+    }
+    const lists = await mapLimit(days, 4, async (parts) => {
+      const dayDir = path.join(dir, ...parts);
+      const out = [];
+      for (const h of (await readdirSafe(dayDir)).sort()) {
+        const mins = (await readdirSafe(path.join(dayDir, h))).sort();
+        const files = await mapLimit(mins, 16, (m) => readdirSafe(path.join(dayDir, h, m)));
+        mins.forEach((m, k) => {
+          for (const f of files[k].sort()) {
+            const x = JSON_RE.exec(f);
+            if (!x) continue;
+            const ts = new Date(+x[1], +x[2] - 1, +x[3], +x[4], +x[5], +x[6], +x[7]).getTime();
+            // Names are local time; allow an hour of slack around DST changes, the file content decides.
+            if (ts >= from - 3600000 && ts <= to + 3600000) out.push({ file: path.join(dayDir, h, m, f), ts });
+          }
+        });
+      }
+      return out;
+    });
+    return lists.flat().sort((a, b) => a.ts - b.ts);
+  }
+
+  // Daily CSV files written by older versions.
+  async loadCsv(dir, from, to, instances) {
     let names;
-    try { names = await fsp.readdir(dir); } catch (e) { throw new Error(`Cannot read folder: ${e.message}`); }
+    try { names = await fsp.readdir(dir); } catch { return { samples: [], files: [] }; }
     const fromDay = dayStamp(from);
     const toDay = dayStamp(to);
     const files = names.filter((n) => {
@@ -166,7 +244,6 @@ class HistoryStore {
       const d = `${m[1]}-${m[2]}-${m[3]}`;
       return d >= fromDay && d <= toDay;
     }).sort();
-
     const byHeader = new Map();
     for (const inst of instances) {
       for (const d of inst.datapoints) {
@@ -175,7 +252,6 @@ class HistoryStore {
         if (d.enum) byHeader.set(`${inst.name} - ${d.name} (text)`, { key: `${inst.id}.${d.key}`, dp: d, kind: 'text' });
       }
     }
-
     const out = [];
     for (const name of files) {
       const text = await fsp.readFile(path.join(dir, name), 'utf8');
@@ -199,20 +275,58 @@ class HistoryStore {
             v.raw = Math.round(num / (c.dp.scale || 1));
           }
         }
-        for (const k of Object.keys(values)) {
-          const v = values[k];
-          // Also drops "empty" register values (e.g. -3276.8 °C) written by older versions.
-          if (v.value == null || (v.dp.type !== 'EMGR' && isEmptyRaw(v.raw, v.dp.type)) || !isPlausible(v.value, v.dp)) { delete values[k]; continue; }
-          if (v.dp.enum && v.text == null) v.text = v.dp.enum[v.raw] ?? `Unknown (${v.raw})`;
-          delete v.dp;
-        }
-        const sample = { ts, source: row[1] === 'SIMULATED' ? 'simulator' : 'device', values, history: true };
+        const sample = { ts, source: row[1] === 'SIMULATED' ? 'simulator' : 'device', values: cleanValues(values), history: true };
         const iv = ivCol > 0 ? Number(row[ivCol]) * 1000 : NaN;
         if (iv > 0) sample.intervalMs = iv;
         out.push(sample);
       }
     }
-    out.sort((a, b) => a.ts - b.ts);
+    return { samples: out, files };
+  }
+
+  // Reads stored samples between from..to (ms) from the JSON files and legacy CSV files. Values are
+  // matched against the current module configuration; unknown ones (e.g. removed modules) are ignored.
+  async load({ from, to = Date.now(), source = 'device', instances, maxSamples = 20000 }) {
+    if (!this.folder) return { samples: [], files: [] };
+    const dir = dirFor(this.folder, source);
+    try { await fsp.access(dir); } catch (e) { throw new Error(`Cannot read folder: ${e.message}`); }
+    const byKey = new Map();
+    for (const inst of instances) for (const d of inst.datapoints) byKey.set(`${inst.id}.${d.key}`, d);
+
+    const csv = await this.loadCsv(dir, from, to, instances);
+    let entries = await this.listJson(dir, from, to);
+    const jsonCount = entries.length;
+    // Too many files for the chart limit: read an evenly spaced subset instead of every file.
+    const total = jsonCount + csv.samples.length;
+    let jsonStep = 1;
+    if (total > maxSamples && jsonCount) {
+      const keep = Math.max(Math.min(jsonCount, 2), Math.round((maxSamples * jsonCount) / total));
+      jsonStep = jsonCount / keep;
+      const picked = [];
+      for (let i = 0; i < keep; i++) picked.push(entries[Math.floor(i * jsonStep)]);
+      picked[picked.length - 1] = entries[entries.length - 1];
+      entries = picked;
+    }
+    const json = (await mapLimit(entries, 32, async ({ file }) => {
+      try {
+        const doc = JSON.parse(await fsp.readFile(file, 'utf8'));
+        const ts = Date.parse(doc.timestamp);
+        if (!Number.isFinite(ts) || ts < from || ts > to) return null;
+        const values = {};
+        for (const [key, num] of Object.entries(doc.values || {})) {
+          const dp = byKey.get(key);
+          if (!dp || typeof num !== 'number' || !Number.isFinite(num)) continue;
+          values[key] = { raw: Math.round(num / (dp.scale || 1)), value: num, text: doc.text?.[key] ?? null, dp };
+        }
+        const sample = { ts, source: doc.source === 'simulator' ? 'simulator' : 'device', values: cleanValues(values), history: true };
+        if (doc.pollIntervalSec > 0) sample.intervalMs = doc.pollIntervalSec * 1000 * jsonStep;
+        return sample;
+      } catch {
+        return null; // unreadable / partially synced file
+      }
+    })).filter(Boolean);
+
+    const out = [...csv.samples, ...json].sort((a, b) => a.ts - b.ts);
     // Evenly thin out to the session sample limit so charts stay fast.
     let samples = out;
     if (out.length > maxSamples) {
@@ -225,8 +339,20 @@ class HistoryStore {
       }
       samples[samples.length - 1] = out[out.length - 1];
     }
-    return { samples, files, totalRows: out.length };
+    return { samples, files: [...csv.files, ...(jsonCount ? [`${jsonCount} JSON files`] : [])], jsonFiles: jsonCount, csvFiles: csv.files.length, totalRows: csv.samples.length + jsonCount };
   }
 }
 
-module.exports = { HistoryStore, parseCsv, oneDriveRoots, folderInfo, dayStamp, fileFor };
+// Drops "empty" register values (e.g. -3276.8 °C written by older versions) and implausible readings,
+// and fills in enum texts.
+function cleanValues(values) {
+  for (const k of Object.keys(values)) {
+    const v = values[k];
+    if (v.value == null || (v.dp.type !== 'EMGR' && isEmptyRaw(v.raw, v.dp.type)) || !isPlausible(v.value, v.dp)) { delete values[k]; continue; }
+    if (v.dp.enum && v.text == null) v.text = v.dp.enum[v.raw] ?? `Unknown (${v.raw})`;
+    delete v.dp;
+  }
+  return values;
+}
+
+module.exports = { HistoryStore, parseCsv, oneDriveRoots, folderInfo, dayStamp, fileFor, jsonFileFor, sampleToJson };

@@ -114,7 +114,7 @@
             <span id="historyStatus" class="muted"></span>
           </div>
           <p class="muted">Pick a folder inside your synced OneDrive (e.g. <code>~/Library/CloudStorage/OneDrive-Personal/LambdaWP</code>). The OneDrive app uploads the files, so the app needs no sign-in.
-            One CSV file per day is written (<code>lambda-wp-YYYY-MM-DD.csv</code>). Simulated data goes to the <code>simulated/</code> subfolder and is never loaded as history.</p>
+            Every poll is saved as a new JSON file (<code>YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/&lt;timestamp&gt;.json</code>); daily CSV files from older versions are still read. Simulated data goes to the <code>simulated/</code> subfolder and is never loaded as history.</p>
         </fieldset>
         <fieldset>
           <legend>🖥 Background collection</legend>

@@ -132,18 +132,45 @@ class ModbusService extends EventEmitter {
     const started = Date.now();
     this.lastPollAt = started;
     let failed = false;
+    // Watchdog: a poll that never settles (half-open TCP connection, e.g. after the computer slept)
+    // must not stop collecting forever.
+    const gen = (this.pollGen = (this.pollGen || 0) + 1);
+    let watchdog;
     try {
-      await this.pollOnce();
+      await Promise.race([
+        this.pollOnce(gen),
+        new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('Poll timed out')), this.pollDeadlineMs()); }),
+      ]);
       if (!this.keepsConnection) this.closeIdle();
     } catch (e) {
-      failed = true;
-      this.disconnect();
-      this.setConnected(false, e.message || String(e));
+      if (gen === this.pollGen) {
+        this.polling = false;
+        failed = true;
+        this.disconnect();
+        this.setConnected(false, e.message || String(e));
+      }
     }
-    if (!this.running) return;
+    clearTimeout(watchdog);
+    if (!this.running || gen !== this.pollGen) return;
     // After an error, retry within a minute even if the regular interval is longer.
     const interval = failed ? Math.min(this.pollIntervalMs, 60000) : this.pollIntervalMs;
     this.timer = setTimeout(() => this.loop(), Math.max(0, interval - (Date.now() - started)));
+  }
+
+  // Connect (OS TCP timeout ≤ 75 s) plus generous time for all register reads.
+  pollDeadlineMs() {
+    return Number(this.config?.pollDeadlineMs) || 120000;
+  }
+
+  // Called after the computer wakes up: the old TCP connection is usually dead, so start fresh and poll now.
+  wake() {
+    if (!this.running) return;
+    this.pollGen = (this.pollGen || 0) + 1; // abandon a poll that may still hang on the old socket
+    this.polling = false;
+    if (this.client) { try { this.client.close(() => {}); } catch { /* ignore */ } }
+    this.client = null;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.loop(), 2000);
   }
 
   async readBlock(start, count) {
@@ -156,7 +183,7 @@ class ModbusService extends EventEmitter {
     return /Port Not Open|ECONN|EPIPE|ETIMEDOUT|EHOSTUNREACH|socket|closed/i.test(msg) || e?.errno;
   }
 
-  async pollOnce() {
+  async pollOnce(gen = this.pollGen) {
     if (this.polling) return;
     this.polling = true;
     try {
@@ -191,9 +218,10 @@ class ModbusService extends EventEmitter {
           }
         }
       }
+      if (gen !== this.pollGen) return; // timed out / abandoned meanwhile
       this.emit('data', { ts, source: this.source, intervalMs: this.pollIntervalMs, values });
     } finally {
-      this.polling = false;
+      if (gen === this.pollGen) this.polling = false;
     }
   }
 }
