@@ -451,10 +451,10 @@ function renderHistoryChip() {
   const folderName = config.dataFolder.split(/[\\/]/).filter(Boolean).pop();
   const parts = [];
   if (historyResult?.skipped) parts.push('history hidden while showing simulated data');
-  else if (historyResult?.ok) parts.push(`${historyResult.rows.toLocaleString()} stored samples (${historyResult.days} d, ${historyResult.files.toLocaleString()} file${historyResult.files === 1 ? '' : 's'})`);
+  else if (historyResult?.ok) parts.push(`${historyResult.rows.toLocaleString()} ${historyResult.hourly ? 'hourly history points' : 'stored samples'} (${historyResult.days} d, ${historyResult.files.toLocaleString()} file${historyResult.files === 1 ? '' : 's'})`);
   if (historyResult && !historyResult.ok) parts.push(`load failed: ${historyResult.error}`);
   if (historyState?.error) parts.push(`save failed: ${historyState.error}`);
-  else if (config.storeEnabled) parts.push(historyState?.lastWrittenAt ? `${historyState.rowsWritten} files saved, last ${fmtAgo(historyState.lastWrittenAt)}` : 'saving every poll');
+  else if (config.storeEnabled) parts.push(historyState?.lastWrittenAt ? `${historyState.rowsWritten} 5-minute samples saved, last ${fmtAgo(historyState.lastWrittenAt)}` : 'accumulating a 5-minute average');
   else parts.push('saving off');
   chip.hidden = false;
   chip.className = `history-chip${historyState?.error || (historyResult && !historyResult.ok) ? ' err' : config.storeEnabled ? '' : ' off'}`;
@@ -508,10 +508,10 @@ function renderSaveIndicator() {
     const file = (st.lastFile || '').split(/[\\/]/).pop();
     cls = 'ok'; text = `💾 Saved ${time(st.lastWrittenAt)}`;
     title = `Last write: ${new Date(st.lastWrittenAt).toLocaleString()}\nFile: ${st.lastFile}\n` +
-      `Files written this session: ${st.rowsWritten}${st.lastSource === 'simulator' ? '\n(simulated data → simulated/ subfolder)' : ''}`;
+      `Five-minute samples written this session: ${st.rowsWritten}\nHourly average updated after each sample.${st.lastSource === 'simulator' ? '\n(simulated data → simulated/ subfolder)' : ''}`;
     el.dataset.file = file;
   } else {
-    cls = 'idle'; text = '💾 Ready'; title = `Every data query will be saved to ${config.dataFolder}`;
+    cls = 'idle'; text = '💾 Ready'; title = `A 5-minute average will be saved to ${config.dataFolder}; hourly averages are used for history`;
   }
   el.className = `save-ind ${cls}`;
   el.textContent = text;

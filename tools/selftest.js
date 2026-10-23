@@ -214,6 +214,98 @@ server.on('initialized', async () => {
     }
     fs.rmSync(dir, { recursive: true, force: true });
 
+    // Foreground polling stays fast; disk samples average complete five-minute buckets.
+    {
+      const sampledDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lwp-sampling-'));
+      const sampled = new HistoryStore();
+      sampled.configure({ folder: sampledDir, enabled: true, instances: hInst });
+      const start = new Date(2026, 0, 12, 10).getTime();
+      for (let i = 0; i < 60; i++) {
+        const sample = mk(start + i * 5000, i < 30 ? 20 : 40);
+        if (i % 2) delete sample.values['ambient.actual'];
+        sample.values['heatpump1.hpState'] = { raw: i < 59 ? 0 : 7, value: i < 59 ? 0 : 7, text: i < 59 ? 'OFF' : 'REGULATION' };
+        assert.strictEqual(sampled.collect(sample), false, 'no file for individual five-second readings');
+      }
+      assert.strictEqual(sampled.status().rowsWritten, 0);
+      assert.strictEqual(fs.readdirSync(sampledDir).length, 0);
+      assert.strictEqual(sampled.collect(mk(start + 300000, 40)), true);
+      assert.strictEqual(sampled.status().rowsWritten, 1);
+      const five = JSON.parse(fs.readFileSync(sampled.status().lastFile, 'utf8'));
+      assert.strictEqual(five.aggregation, '5-minute-average');
+      assert.strictEqual(five.values['heatpump1.tFlow'], 30);
+      assert.strictEqual(five.counts['heatpump1.tFlow'], 60);
+      assert.strictEqual(five.counts['ambient.actual'], 30, 'missing readings do not count as zero');
+      assert.strictEqual(five.values['heatpump1.hpState'], 7, 'states retain their latest value');
+      assert.strictEqual(five.pollIntervalSec, 300, 'chart spacing is independent of the live poll rate');
+      assert.strictEqual(five.periodStart, new Date(start).toISOString());
+      assert.strictEqual(five.periodEnd, new Date(start + 295000).toISOString());
+      // Half as many observations in the next window: hourly weighting must use per-key counts.
+      for (let i = 1; i < 30; i++) sampled.collect(mk(start + 300000 + i * 10000, 40));
+      assert.strictEqual(sampled.collect(mk(start + 600000, 50)), true);
+      const hourFile = path.join(path.dirname(path.dirname(sampled.status().lastFile)), 'hourly.json');
+      const hour = JSON.parse(fs.readFileSync(hourFile, 'utf8'));
+      assert.strictEqual(hour.aggregation, 'hourly-average');
+      assert.strictEqual(hour.pollIntervalSec, 3600);
+      assert.strictEqual(hour.counts['heatpump1.tFlow'], 90);
+      assert.ok(Math.abs(hour.values['heatpump1.tFlow'] - 100 / 3) < 1e-10);
+      assert.strictEqual(hour.counts['ambient.actual'], 60);
+      const raw = await sampled.load({ from: start, to: start + 3600000, instances: hInst });
+      assert.strictEqual(raw.samples.length, 2);
+      const compact = await sampled.load({ from: start, to: start + 3600000, instances: hInst, hourly: true });
+      assert.strictEqual(compact.samples.length, 1, 'history uses the hourly summary instead of its component files');
+      assert.ok(Math.abs(compact.samples[0].values['heatpump1.tFlow'].value - 100 / 3) < 1e-10);
+      const mtime = fs.statSync(hourFile).mtimeMs;
+      const restarted = new HistoryStore();
+      restarted.configure({ folder: sampledDir, enabled: true, instances: hInst });
+      await restarted.load({ from: start, to: start + 3600000, instances: hInst, hourly: true });
+      assert.strictEqual(fs.statSync(hourFile).mtimeMs, mtime, 'restart reuses cached hourly data');
+      const boundary = await restarted.load({ from: start + 300000, to: start + 3600000, instances: hInst, hourly: true });
+      assert.strictEqual(boundary.samples.length, 1);
+      assert.strictEqual(boundary.samples[0].values['heatpump1.tFlow'].value, 40, 'range boundary excludes earlier readings');
+      restarted.collect(mk(start + 3600000, 60));
+      assert.ok(restarted.collect(mk(start + 3900000, 80)), 'background five-minute polling also saves');
+      const acrossHours = await restarted.load({ from: start, to: start + 7200000, instances: hInst, hourly: true });
+      assert.strictEqual(acrossHours.samples.length, 2);
+      assert.strictEqual(acrossHours.samples[1].values['heatpump1.tFlow'].value, 60);
+      // Historical files from old releases acquire summaries without deleting or rewriting originals.
+      const legacySample = mk(start - 3600000, 25);
+      assert.ok(restarted.write(legacySample));
+      const legacyFile = restarted.status().lastFile;
+      const old = fs.readFileSync(legacyFile, 'utf8');
+      const legacy = await restarted.load({ from: start - 3600000, to: start, instances: hInst, hourly: true });
+      assert.strictEqual(legacy.samples.length, 1);
+      assert.strictEqual(fs.readFileSync(legacyFile, 'utf8'), old);
+      assert.ok(fs.existsSync(path.join(path.dirname(path.dirname(legacyFile)), 'hourly.json')));
+      const cadenceDir = path.join(sampledDir, 'cadence');
+      const cadence = new HistoryStore();
+      cadence.configure({ folder: cadenceDir, enabled: true, instances: hInst });
+      for (let i = 0; i <= 720; i++) cadence.collect(mk(start + i * 5000, 20 + i % 60));
+      assert.strictEqual(cadence.status().rowsWritten, 12, '720 five-second polls produce exactly 12 five-minute files');
+      const cadenceRaw = await cadence.load({ from: start, to: start + 3600000, instances: hInst });
+      assert.strictEqual(cadenceRaw.samples.length, 12);
+      const cadenceHourly = await cadence.load({ from: start, to: start + 3600000, instances: hInst, hourly: true });
+      assert.strictEqual(cadenceHourly.samples.length, 1);
+      assert.strictEqual(cadenceHourly.samples[0].values['heatpump1.tFlow'].value, 49.5);
+      const cadenceHour = JSON.parse(fs.readFileSync(path.join(path.dirname(path.dirname(cadence.status().lastFile)), 'hourly.json'), 'utf8'));
+      assert.strictEqual(cadenceHour.counts['heatpump1.tFlow'], 720);
+      // Missing and failed sensors must not create made-up averages, and device/simulator windows stay separate.
+      const missing = mk(start + 7200000, -300);
+      delete missing.values['ambient.actual'];
+      missing.values['heatpump1.hpState'] = { error: 'read failed' };
+      cadence.collect(missing);
+      cadence.collect({ ...missing, ts: start + 7500000 });
+      const missingDoc = JSON.parse(fs.readFileSync(cadence.status().lastFile, 'utf8'));
+      assert.deepStrictEqual(missingDoc.values, {});
+      const written = cadence.status().rowsWritten;
+      cadence.collect(mk(start + 7505000, 99, 'simulator'));
+      assert.strictEqual(cadence.status().rowsWritten, written);
+      cadence.collect(mk(start + 7800000, 99, 'simulator'));
+      assert.strictEqual(cadence.status().lastSource, 'simulator');
+      assert.ok(cadence.status().lastFile.includes(`${path.sep}simulated${path.sep}`));
+      fs.rmSync(sampledDir, { recursive: true, force: true });
+      console.log('history sampling: five-minute averages, weighted hourly summaries, cached loading and restart OK');
+    }
+
     // Background polling: long intervals close the connection after each poll (the device drops idle
     // connections after 1 min) without reporting "disconnected"; switching back to a short interval polls at once.
     {

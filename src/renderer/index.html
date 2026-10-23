@@ -107,7 +107,7 @@
           <legend>☁ OneDrive data folder (history)</legend>
           <label>Folder <span class="host-row"><input name="dataFolder" placeholder="No folder selected" spellcheck="false" /><button type="button" id="btnChooseFolder">📁 Choose…</button></span></label>
           <div id="folderInfo" class="folder-info muted"></div>
-          <label class="inline"><input type="checkbox" name="storeEnabled" /> Save every data query to this folder (one row per poll)</label>
+          <label class="inline"><input type="checkbox" name="storeEnabled" /> Save a 5-minute average to this folder</label>
           <label>History to load (days) <input name="historyDays" type="number" min="1" max="365" step="1" /></label>
           <label class="inline"><input type="checkbox" name="loadHistoryOnStart" /> Load history from this folder when the app starts</label>
           <div class="folder-actions">
@@ -116,7 +116,7 @@
             <span id="historyStatus" class="muted"></span>
           </div>
           <p class="muted">Pick a folder inside your synced OneDrive (e.g. <code>~/Library/CloudStorage/OneDrive-Personal/LambdaWP</code>). The OneDrive app uploads the files, so the app needs no sign-in.
-            Every poll is saved as a new JSON file (<code>YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/&lt;timestamp&gt;.json</code>); daily CSV files from older versions are still read. Simulated data goes to the <code>simulated/</code> subfolder and is never loaded as history.</p>
+            Live data still refreshes every 5 seconds. One 5-minute average is saved as a JSON file (<code>YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/&lt;timestamp&gt;.json</code>), and <code>hourly.json</code> is updated in the hour folder for faster history loading. Daily CSV files from older versions are still read. Simulated data goes to the <code>simulated/</code> subfolder and is never loaded as history.</p>
         </fieldset>
         <fieldset>
           <legend>🖥 Background collection</legend>
@@ -125,7 +125,7 @@
           <label class="inline"><input type="checkbox" name="autoStart" /> Start with my computer – in the background, without a window, and start collecting</label>
           <label class="inline"><input type="checkbox" name="connectOnStart" /> Connect automatically when the app is opened</label>
           <div id="backgroundInfo" class="muted"></div>
-          <p class="muted">In the background the app reads the heat pump at the background interval (default every 5 min; with the window open it uses the normal poll interval, default 5 s) and saves every query to the data folder. Opening the window shows the full history from the data folder.
+          <p class="muted">In the background the app reads the heat pump at the background interval (default every 5 min; with the window open it uses the normal poll interval, default 5 s). Readings are saved as 5-minute averages, with hourly averages for history. Opening the window loads history from the data folder.
             Use the tray icon to open the window, start/stop collecting or quit.</p>
         </fieldset>
         <fieldset>

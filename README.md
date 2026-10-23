@@ -136,7 +136,7 @@ The PDF doesn't document how the controller answers for unconfigured modules, so
 
 In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick a folder inside your locally synced OneDrive, for example `~/Library/CloudStorage/OneDrive-Personal/LambdaWP` on macOS or `%OneDrive%\LambdaWP` on Windows. The OneDrive app uploads and downloads the files, so the app itself needs no Microsoft sign-in. Under the field, the app tells you whether the folder is inside OneDrive, local only, missing or not writable.
 
-- **Saving**: every data query (poll) creates a new JSON file in a folder hierarchy by local date and time:
+- **Saving**: live readings still refresh every **5 seconds** while the window is open. Disk storage is independent: one JSON sample averages the available readings in each **5-minute window**, using a folder hierarchy by local date and time:
 
   ```
   <data folder>/YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/YYYY-MM-DD-HH-MM-SS-mmm.json
@@ -151,15 +151,20 @@ In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick 
    "text":{"heatpump1.hpState":"REGULATION"},"units":{"heatpump1.tFlow":"°C"}}
   ```
 
-  - `timestamp` (UTC, ISO 8601) is authoritative; the folder names are local time.
-  - `values` holds scaled values keyed by `<module id>.<datapoint>`. Missing, failed or implausible readings are left out.
+  - `timestamp` (UTC, ISO 8601) is the last actual reading in the window; the folder names are local time.
+  - New samples also include `aggregation: "5-minute-average"`, `periodStart`, `periodEnd` and per-datapoint `counts`. Numeric measurements are averaged using only valid readings. States and error codes keep their latest valid value, not a meaningless numeric average.
+  - `values` holds scaled values keyed by `<module id>.<datapoint>`. Missing, failed or implausible readings are left out, never counted as zero.
+  - Windows align to five-minute clock boundaries. The first window after starting can be shorter. A completed window is written when the next reading arrives; no extra files are written on every live refresh or window open/close. An unfinished window remains in memory and is lost if the app quits.
+  - Each sample write updates `hourly.json` in its hour folder. Hourly averages use per-datapoint counts, so a partially populated five-minute window has less weight than a full one. The current hour's summary is updated as samples arrive.
+  - Background polling retains its configured interval. At five-minute polling, a window normally contains one reading; polling more slowly does not invent intermediate readings.
   - Simulated data is written to the `simulated/` subfolder and is never loaded as history.
   - Daily CSV files from older versions (`lambda-wp-YYYY-MM-DD.csv`) stay in the folder and are still loaded as history.
   - To convert them to the JSON format, run `node tools/csv2json.js "<data folder>"` (add `--dry-run` to only count). Every row becomes one JSON file, and the CSV files are moved to `converted-csv/` so they aren't loaded twice. Existing JSON files are never overwritten.
 - **History**:
   - On start, or with **⟳ Load history now**, the last *N* days (setting **History to load**) are read from the folder and shown in all charts. Several devices or computers can share the folder.
-  - Only the day folders in the requested range are read. Values are matched with the current module settings; unknown ones are ignored.
-  - Large ranges are thinned out evenly to the *Max. session samples* setting; only that many files are actually read.
+  - History loads hourly averages instead of every detailed sample. Existing JSON history gets hourly summaries on its first load; subsequent loads reuse them. Originals are retained. If new sample files arrive from OneDrive, the affected summary is rebuilt.
+  - Only the day folders in the requested range are scanned. Values are matched with the current module settings; unknown ones are ignored. Range boundaries use detailed files when a full hour would include readings outside the requested period.
+  - Large ranges are thinned out evenly to the *Max. session samples* setting. The first load of older data must read its original files to calculate accurate averages and can take longer. Legacy CSV history is averaged by hour when loaded.
   - The chart window widens automatically so the history is visible; *2 days*, *7 days* and *30 days* options are available.
 - While only history is shown, the banner says **NOT CONNECTED – OUTDATED VALUES**.
 - The chip above the Overview charts shows how many stored samples were loaded and how many files were saved.
@@ -167,8 +172,8 @@ In **Settings → ☁ OneDrive data folder**, click **📁 Choose…** and pick 
 
   | Indicator | Meaning |
   |---|---|
-  | 🟢 **💾 Saved 14:37:05** (flashes on every write) | A new JSON file was just written. Hover to see the file and the number of files written this session; click to open the folder. |
-  | 🔵 **💾 Ready** | Folder set; the next query will be saved. |
+  | 🟢 **💾 Saved 14:37:05** (flashes on every write) | A five-minute sample was written and its hourly summary updated. Hover for details; click to open the folder. |
+  | 🔵 **💾 Ready** | Folder set; readings are accumulating until the next five-minute boundary. |
   | 🟡 **💾 Not saved** | No folder selected. Data is only kept for this session; click to open Settings. |
   | ⚪ **💾 Saving off** | Saving is switched off in Settings. |
   | 🔴 **💾 Save failed** | The write failed; hover for the error. |
@@ -227,7 +232,7 @@ By default the simulator has 2 heat pumps, 1 boiler, 1 buffer, no solar module a
 src/registers.js        register map from the PDF + address/decoding helpers
 src/discovery.js       network search / device identification
 src/moduleDetect.js    detects installed modules by probing module slots
-src/historyStore.js    one JSON file per poll in the (OneDrive) data folder: write + load history
+src/historyStore.js    five-minute JSON samples and hourly averages: write + load history
 src/modbusService.js    Modbus TCP poller (main process)
 src/csv.js              CSV export / continuous logger
 src/main.js, preload.js Electron main process (tray, background mode) + IPC bridge

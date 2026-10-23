@@ -68,7 +68,7 @@ service.on('data', (sample) => {
   const max = Number(config.maxSamples) || 20000;
   if (samples.length > max) samples.splice(0, samples.length - max);
   logger.write(sample);
-  history.write(sample);
+  history.collect(sample);
   send('history:status', history.status());
   send('modbus:data', sample);
   updateTray();
@@ -170,8 +170,8 @@ function saveLine() {
   if (!config.dataFolder) return 'Not saved – no data folder selected';
   if (!config.storeEnabled) return 'Saving to data folder is off';
   if (h.error) return `Save failed: ${h.error}`;
-  if (h.lastWrittenAt) return `Last saved ${new Date(h.lastWrittenAt).toLocaleTimeString()} · ${h.rowsWritten} files this session`;
-  return 'Every poll will be saved to the data folder';
+  if (h.lastWrittenAt) return `Last saved ${new Date(h.lastWrittenAt).toLocaleTimeString()} · ${h.rowsWritten} five-minute samples this session`;
+  return 'Saving a 5-minute average; live readings continue normally';
 }
 
 let lastMenuKey = '';
@@ -258,6 +258,7 @@ async function loadHistory() {
       source: 'device',
       instances: buildInstances(config),
       maxSamples: Number(config.maxSamples) || 20000,
+      hourly: true,
     });
     // Keep live samples that are newer than the stored history; never mix with simulated data.
     const lastTs = r.samples.length ? r.samples[r.samples.length - 1].ts : 0;
@@ -267,7 +268,7 @@ async function loadHistory() {
       const max = Number(config.maxSamples) || 20000;
       if (samples.length > max) samples.splice(0, samples.length - max);
     }
-    return { ok: true, rows: r.samples.length, totalRows: r.totalRows || 0, files: (r.jsonFiles || 0) + (r.csvFiles || 0), jsonFiles: r.jsonFiles || 0, csvFiles: r.csvFiles || 0, days };
+    return { ok: true, hourly: true, rows: r.samples.length, totalRows: r.totalRows || 0, files: (r.jsonFiles || 0) + (r.csvFiles || 0), jsonFiles: r.jsonFiles || 0, csvFiles: r.csvFiles || 0, days };
   } catch (e) {
     return { ok: false, error: e.message };
   }

@@ -1,5 +1,5 @@
 'use strict';
-// Stores every sample as its own JSON file in a (OneDrive-synced) folder and reads them back as history.
+// Stores five-minute averages and cached hourly history in a (OneDrive-synced) folder.
 // Real device data:  <folder>/YYYY/YYYY-MM/YYYY-MM-DD/YYYY-MM-DD-HH/YYYY-MM-DD-HH-MM/YYYY-MM-DD-HH-MM-SS-mmm.json
 // Simulated data:    <folder>/simulated/YYYY/... (kept apart so history is never polluted)
 // Folder and file names use local time; the "timestamp" inside each file (UTC, ISO 8601) is authoritative.
@@ -14,6 +14,57 @@ const { isEmptyRaw, isPlausible } = require('./registers');
 const FILE_RE = /^lambda-wp-(\d{4})-(\d{2})-(\d{2})\.csv$/;
 const JSON_RE = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{3})\.json$/;
 const FORMAT = 'lambda-wp-sample/1';
+const SAVE_INTERVAL = 5 * 60000;
+const HOUR = 3600000;
+
+function aggregateSamples(samples, instances, intervalMs) {
+  const last = samples[samples.length - 1];
+  const values = {};
+  const counts = {};
+  for (const inst of instances) for (const dp of inst.datapoints) {
+    const key = `${inst.id}.${dp.key}`;
+    let sum = 0;
+    let count = 0;
+    let latest;
+    for (const sample of samples) {
+      const v = sample.values[key];
+      if (!v || v.error || v.missing || !Number.isFinite(v.value) || !isPlausible(v.value, dp)) continue;
+      const n = sample.counts?.[key] || 1;
+      sum += v.value * n;
+      count += n;
+      latest = v;
+    }
+    if (!count) continue;
+    // States and error codes are categorical, even when the PDF has no enum for them.
+    const categorical = dp.enum || /error|state/i.test(dp.key);
+    const value = categorical ? latest.value : sum / count;
+    values[key] = { value, raw: categorical ? latest.raw : null, text: categorical ? latest.text : null };
+    counts[key] = count;
+  }
+  return { ts: last.ts, source: last.source, intervalMs, values, counts,
+    periodStart: samples[0].periodStart ?? samples[0].ts, periodEnd: last.periodEnd ?? last.ts };
+}
+
+function atomicJson(file, doc) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(doc));
+  fs.renameSync(tmp, file);
+}
+
+function jsonToSample(doc, instances) {
+  const values = {};
+  for (const inst of instances) for (const dp of inst.datapoints) {
+    const key = `${inst.id}.${dp.key}`;
+    const value = doc.values?.[key];
+    if (!Number.isFinite(value) || !isPlausible(value, dp)) continue;
+    values[key] = { value, raw: Math.round(value / (dp.scale || 1)), text: doc.text?.[key] ?? null, dp };
+  }
+  return { ts: Date.parse(doc.timestamp), source: doc.source, intervalMs: doc.pollIntervalSec * 1000,
+    values: cleanValues(values), counts: doc.counts,
+    periodStart: doc.periodStart == null ? undefined : Date.parse(doc.periodStart),
+    periodEnd: doc.periodEnd == null ? undefined : Date.parse(doc.periodEnd), history: true };
+}
 
 const p2 = (n) => String(n).padStart(2, '0');
 
@@ -64,6 +115,12 @@ function sampleToJson(sample, instances) {
     values,
     text,
     units,
+    ...(sample.counts ? {
+      aggregation: sample.intervalMs === HOUR ? 'hourly-average' : '5-minute-average',
+      counts: sample.counts,
+      periodStart: new Date(sample.periodStart).toISOString(),
+      periodEnd: new Date(sample.periodEnd).toISOString(),
+    } : {}),
   };
 }
 
@@ -159,13 +216,75 @@ class HistoryStore {
     this.lastFile = null;
     this.lastWrittenAt = null;
     this.rowsWritten = 0;
+    this.pending = [];
+    this.lastCollectedAt = null;
   }
 
   configure({ folder, enabled, instances }) {
+    if (this.folder !== (folder || null) || this.enabled !== !!(folder && enabled)) {
+      this.pending = [];
+      this.lastCollectedAt = null;
+    }
     this.folder = folder || null;
     this.enabled = !!(folder && enabled);
     this.instances = instances;
     this.lastError = null;
+  }
+
+  // Live polling and disk sampling are independent. Never flush a partial window on UI changes.
+  collect(sample) {
+    if (!this.enabled || !this.instances) return false;
+    if (this.pending.length && this.pending[0].source !== sample.source) {
+      this.pending = [];
+      this.lastCollectedAt = null;
+    }
+    if (this.lastCollectedAt == null) this.lastCollectedAt = Math.floor(sample.ts / SAVE_INTERVAL) * SAVE_INTERVAL;
+    if (sample.ts - this.lastCollectedAt < SAVE_INTERVAL || !this.pending.length) {
+      this.pending.push(sample);
+      return false;
+    }
+    const average = aggregateSamples(this.pending, this.instances, SAVE_INTERVAL);
+    if (!this.write(average)) {
+      this.pending = [average, sample];
+      return false;
+    }
+    this.pending = [sample];
+    this.lastCollectedAt = Math.floor(sample.ts / SAVE_INTERVAL) * SAVE_INTERVAL;
+    try {
+      this.refreshHour(jsonFileFor(this.folder, average.source, average.ts), this.instances);
+    } catch (e) {
+      this.lastError = `Sample saved, but hourly average failed: ${e.message}`;
+    }
+    return true;
+  }
+
+  refreshHour(file, instances, entries) {
+    const hourDir = path.dirname(path.dirname(file));
+    if (!entries) {
+      entries = [];
+      for (const minute of fs.readdirSync(hourDir, { withFileTypes: true })) {
+        if (!minute.isDirectory()) continue;
+        for (const name of fs.readdirSync(path.join(hourDir, minute.name))) {
+          if (JSON_RE.test(name)) entries.push({ file: path.join(hourDir, minute.name, name) });
+        }
+      }
+    }
+    const fingerprint = entries.map((e) => path.relative(hourDir, e.file)).sort().join('\n');
+    const cache = path.join(hourDir, 'hourly.json');
+    try {
+      const doc = JSON.parse(fs.readFileSync(cache, 'utf8'));
+      const schema = instances.flatMap((inst) => inst.datapoints.map((dp) => `${inst.id}.${dp.key}`)).join(',');
+      if (doc.fingerprint === fingerprint && doc.schema === schema) return { file: cache, ts: Date.parse(doc.timestamp) };
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw new Error(`Cannot read hourly average ${cache}: ${e.message}`);
+    }
+    const samples = entries.map((e) => jsonToSample(JSON.parse(fs.readFileSync(e.file, 'utf8')), instances))
+      .sort((a, b) => a.ts - b.ts);
+    if (!samples.length) return null;
+    const average = aggregateSamples(samples, instances, HOUR);
+    const schema = instances.flatMap((inst) => inst.datapoints.map((dp) => `${inst.id}.${dp.key}`)).join(',');
+    atomicJson(cache, { ...sampleToJson(average, instances), fingerprint, schema });
+    return { file: cache, ts: average.ts };
   }
 
   status() {
@@ -186,11 +305,7 @@ class HistoryStore {
     if (!this.enabled || !this.instances) return false;
     const file = jsonFileFor(this.folder, sample.source, sample.ts);
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      // Write to a temp name first so OneDrive / readers never see a half-written file.
-      const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(sampleToJson(sample, this.instances)));
-      fs.renameSync(tmp, file);
+      atomicJson(file, sampleToJson(sample, this.instances));
       this.lastSampleTs = sample.ts;
       this.lastSource = sample.source;
       this.lastFile = file;
@@ -286,7 +401,7 @@ class HistoryStore {
 
   // Reads stored samples between from..to (ms) from the JSON files and legacy CSV files. Values are
   // matched against the current module configuration; unknown ones (e.g. removed modules) are ignored.
-  async load({ from, to = Date.now(), source = 'device', instances, maxSamples = 20000 }) {
+  async load({ from, to = Date.now(), source = 'device', instances, maxSamples = 20000, hourly = false }) {
     if (!this.folder) return { samples: [], files: [] };
     const dir = dirFor(this.folder, source);
     try { await fsp.access(dir); } catch (e) { throw new Error(`Cannot read folder: ${e.message}`); }
@@ -294,14 +409,50 @@ class HistoryStore {
     for (const inst of instances) for (const d of inst.datapoints) byKey.set(`${inst.id}.${d.key}`, d);
 
     const csv = await this.loadCsv(dir, from, to, instances);
+    if (hourly && csv.samples.length) {
+      const groups = new Map();
+      for (const sample of csv.samples) {
+        const hour = Math.floor(sample.ts / HOUR);
+        if (!groups.has(hour)) groups.set(hour, []);
+        groups.get(hour).push(sample);
+      }
+      csv.samples = [...groups.values()].map((group) => ({
+        ...aggregateSamples(group.sort((a, b) => a.ts - b.ts), instances, HOUR), history: true,
+      }));
+    }
     let entries = await this.listJson(dir, from, to);
     const jsonCount = entries.length;
+    if (hourly) {
+      // Include complete hours in each average, not only files on the range boundary.
+      const start = new Date(from); start.setMinutes(0, 0, 0);
+      const end = new Date(to); end.setMinutes(59, 59, 999);
+      const all = await this.listJson(dir, start.getTime(), end.getTime());
+      const groups = new Map();
+      for (const entry of all) {
+        const hourDir = path.dirname(path.dirname(entry.file));
+        if (!groups.has(hourDir)) groups.set(hourDir, []);
+        groups.get(hourDir).push(entry);
+      }
+      entries = [];
+      for (const group of groups.values()) {
+        await new Promise((resolve) => setImmediate(resolve));
+        // Don't let a boundary-hour average include data outside the requested range.
+        const selected = group.filter((e) => e.ts >= from && e.ts <= to);
+        if (!selected.length) continue;
+        if (selected.length !== group.length) entries.push(...selected);
+        else {
+          const entry = this.refreshHour(group[0].file, instances, group);
+          if (entry) entries.push(entry);
+        }
+      }
+      entries.sort((a, b) => a.ts - b.ts);
+    }
     // Too many files for the chart limit: read an evenly spaced subset instead of every file.
-    const total = jsonCount + csv.samples.length;
+    const total = entries.length + csv.samples.length;
     let jsonStep = 1;
-    if (total > maxSamples && jsonCount) {
-      const keep = Math.max(Math.min(jsonCount, 2), Math.round((maxSamples * jsonCount) / total));
-      jsonStep = jsonCount / keep;
+    if (total > maxSamples && entries.length) {
+      const keep = Math.max(Math.min(entries.length, 2), Math.round((maxSamples * entries.length) / total));
+      jsonStep = entries.length / keep;
       const picked = [];
       for (let i = 0; i < keep; i++) picked.push(entries[Math.floor(i * jsonStep)]);
       picked[picked.length - 1] = entries[entries.length - 1];
