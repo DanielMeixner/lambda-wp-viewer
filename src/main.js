@@ -155,14 +155,58 @@ function showWindow() {
   updateTray(true);
 }
 
+const RUNNING_STATES = new Set([1, 2, 3, 5]); // CH, DHW, CC, DEFROST
+
+function heatPumpRunning() {
+  const last = samples[samples.length - 1];
+  if (!last || last.source === 'simulator') return null;
+  let comp = null;
+  let op = null;
+  for (const [k, v] of Object.entries(last.values)) {
+    if (!v || v.missing || v.error || typeof v.value !== 'number') continue;
+    if (k.startsWith('heatpump') && k.endsWith('.compressor') && comp === null) comp = v.value;
+    if (k.startsWith('heatpump') && k.endsWith('.opState') && op === null) op = v.value;
+  }
+  if (comp !== null && comp > 0) return true;
+  if (op !== null) return RUNNING_STATES.has(op);
+  return comp !== null ? false : null;
+}
+
+async function checkForUpdates() {
+  const url = 'https://api.github.com/repos/DanielMeixner/lambda-wp-viewer/releases/latest';
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'lambda-wp-viewer' } });
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+    const rel = await res.json();
+    const latest = String(rel.tag_name || '').replace(/^v/, '');
+    const cur = app.getVersion();
+    const newer = latest.split('.').map(Number).some((n, i, a) => {
+      const c = cur.split('.').map(Number);
+      return a.slice(0, i).every((x, j) => x === c[j]) && n > (c[i] || 0);
+    });
+    if (!newer) {
+      await dialog.showMessageBox({ type: 'info', message: 'You are up to date', detail: `Version ${cur} is the latest release.` });
+      return;
+    }
+    const r = await dialog.showMessageBox({ type: 'info', message: `Version ${latest} is available`, detail: `You are running ${cur}.`, buttons: ['Open download page', 'Later'], defaultId: 0, cancelId: 1 });
+    if (r.response === 0) shell.openExternal(rel.html_url);
+  } catch (e) {
+    dialog.showMessageBox({ type: 'error', message: 'Update check failed', detail: String(e.message || e) });
+  }
+}
+
 function trayState() {
   const h = history.status();
-  if (!service.running) return { key: null, line: '○ Not collecting' };
+  if (!service.running || !service.connected) {
+    const base = !service.running ? '○ Not collecting' : null;
+    if (base) return { key: 'off', line: base };
+  }
   const name = service.device?.name || `${config.host}:${config.port}`;
-  if (lastStatus.error && !service.connected) return { key: 'err', line: `⚠ Connection error – retrying (${config.host}:${config.port})` };
-  if (!service.connected) return { key: 'wait', line: `◌ Connecting to ${config.host}:${config.port}…` };
+  if (lastStatus.error && !service.connected) return { key: 'off', line: `⚠ Connection error – retrying (${config.host}:${config.port})` };
+  if (!service.connected) return { key: 'off', line: `◌ Connecting to ${config.host}:${config.port}…` };
   if (h.error) return { key: 'err', line: `⚠ Saving failed – ${name}` };
-  return { key: 'ok', line: `● Collecting${service.source === 'simulator' ? ' SIMULATED data' : ''} – ${name} · every ${fmtInterval(service.pollIntervalMs)}` };
+  const hp = heatPumpRunning();
+  return { key: hp === null ? 'ok' : hp ? 'run' : 'stop', line: `${hp ? '● Heat pump running' : hp === false ? '● Heat pump stopped' : '● Collecting'}${service.source === 'simulator' ? ' SIMULATED data' : ''} – ${name} · every ${fmtInterval(service.pollIntervalMs)}` };
 }
 
 function saveLine() {
@@ -185,9 +229,7 @@ function updateTray(force = false) {
   if (!force && key === lastMenuKey && Date.now() - lastMenuAt < 2000) return;
   lastMenuKey = key;
   lastMenuAt = Date.now();
-  const icon = process.platform === 'darwin'
-    ? path.join(ASSETS, `trayTemplate${st.key ? `-${st.key}` : ''}.png`)
-    : path.join(ASSETS, `tray${st.key ? `-${st.key}` : ''}.png`);
+  const icon = path.join(ASSETS, `tray${st.key ? `-${st.key}` : ''}.png`);
   tray.setImage(nativeImage.createFromPath(icon));
   tray.setToolTip(`LAMBDA Heat Pump Viewer\n${st.line}\n${save}`);
   const autostartOn = autostart.supported && autostart.isEnabled();
@@ -210,6 +252,7 @@ function updateTray(force = false) {
     },
     { label: 'Start with my computer (in background)', type: 'checkbox', checked: autostartOn, enabled: autostart.supported, click: (i) => setAutostart(i.checked) },
     { type: 'separator' },
+    { label: 'Search for new updates…', click: checkForUpdates },
     { label: 'Quit (stop collecting)', click: () => { quitting = true; app.quit(); } },
   ]));
   // App Nap would throttle polling while no window is visible.
@@ -219,7 +262,7 @@ function updateTray(force = false) {
 }
 
 function createTray() {
-  tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, process.platform === 'darwin' ? 'trayTemplate.png' : 'tray.png')));
+  tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, 'tray-off.png')));
   // Windows / Linux: left click opens the window, right click shows the menu. macOS always shows the menu.
   if (process.platform !== 'darwin') tray.on('click', showWindow);
   updateTray(true);

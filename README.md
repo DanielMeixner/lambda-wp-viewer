@@ -89,13 +89,14 @@ The app can keep reading and saving data without its window, so the charts show 
 - **Keep collecting when the window is closed** (Settings → *Background collection*, on by default):
   - Closing the window only closes the UI. Polling and saving to the data folder continue.
   - A heat pump icon stays in the **menu bar** (macOS) or **taskbar notification area** (Windows/Linux). On macOS the dock icon also stays.
-  - The icon shows the state: filled dot = collecting, ring / amber = connecting, red = error, no dot = not collecting.
+  - The icon shows the state: dot colour = state: green = heat pump running, blue = stopped, grey = disconnected or not collecting, red = saving error.
   - **Tray menu:**
     - Status and last save time
     - *Open LAMBDA Viewer*
     - *Start/Stop collecting*
     - *Open data folder*
     - The two background options below
+    - *Search for new updates…* (checks GitHub for a newer release and opens its download page)
     - *Quit (stop collecting)*
   - On Windows/Linux, left-clicking the icon opens the window.
   - The first time the window is closed, a notification explains this.

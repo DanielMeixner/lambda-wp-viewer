@@ -74,6 +74,9 @@ const STATES = {
   ok: [34, 197, 94],     // collecting, connected
   wait: [245, 158, 11],  // collecting, (re)connecting
   err: [239, 68, 68],    // connection or save error
+  run: [34, 197, 94],    // heat pump running (green)
+  stop: [37, 99, 235],   // heat pump stopped (blue)
+  off: [148, 163, 184],  // disconnected / not collecting (grey)
 };
 
 // macOS menu bar: black template images (the system adapts them to light/dark mode).
@@ -106,7 +109,7 @@ function colourShade(state, inset = 0) {
 
 fs.mkdirSync(OUT, { recursive: true });
 const write = (name, data) => { fs.writeFileSync(path.join(OUT, name), data); console.log('wrote', name); };
-for (const state of [null, 'ok', 'wait', 'err']) {
+for (const state of [null, 'ok', 'wait', 'err', 'run', 'stop', 'off']) {
   const suffix = state ? `-${state}` : '';
   write(`trayTemplate${suffix}.png`, render(16, templateShade(state)));
   write(`trayTemplate${suffix}@2x.png`, render(32, templateShade(state)));
