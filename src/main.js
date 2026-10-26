@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, Notification, powerSaveBlocker, powerMonitor } = require('electron');
+const { nativeTheme, app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage, Notification, powerSaveBlocker, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { ModbusService } = require('./modbusService');
@@ -229,7 +229,10 @@ function updateTray(force = false) {
   if (!force && key === lastMenuKey && Date.now() - lastMenuAt < 2000) return;
   lastMenuKey = key;
   lastMenuAt = Date.now();
-  const icon = path.join(ASSETS, `tray${st.key ? `-${st.key}` : ''}.png`);
+  const k = st.key ? `-${st.key}` : '';
+  const icon = process.platform === 'darwin'
+    ? path.join(ASSETS, `trayMac${k}-${nativeTheme.shouldUseDarkColors ? 'dark' : 'light'}.png`)
+    : path.join(ASSETS, `tray${k}.png`);
   tray.setImage(nativeImage.createFromPath(icon));
   tray.setToolTip(`LAMBDA Heat Pump Viewer\n${st.line}\n${save}`);
   const autostartOn = autostart.supported && autostart.isEnabled();
@@ -262,7 +265,8 @@ function updateTray(force = false) {
 }
 
 function createTray() {
-  tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, 'tray-off.png')));
+  nativeTheme.on('updated', () => updateTray(true));
+  tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, process.platform === 'darwin' ? 'trayMac-off-light.png' : 'tray-off.png')));
   // Windows / Linux: left click opens the window, right click shows the menu. macOS always shows the menu.
   if (process.platform !== 'darwin') tray.on('click', showWindow);
   updateTray(true);

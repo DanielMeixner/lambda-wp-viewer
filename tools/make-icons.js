@@ -92,6 +92,19 @@ function templateShade(state) {
   };
 }
 
+// macOS menu bar with a coloured dot: not a template image, so the glyph colour follows the theme.
+function macColourShade(state, dark) {
+  const g = dark ? 255 : 0;
+  return (x, y) => {
+    if (state) {
+      const d = circle(x, y, DOT.x, DOT.y, DOT.r);
+      if (d < 0) return [...STATES[state], 1];
+      if (d < 0.07) return null;
+    }
+    return glyph(x, y) < 0 ? [g, g, g, 1] : null;
+  };
+}
+
 // Windows / Linux tray and app icon: white glyph on a blue tile, coloured status dot.
 function colourShade(state, inset = 0) {
   return (x, y) => {
@@ -114,5 +127,12 @@ for (const state of [null, 'ok', 'wait', 'err', 'run', 'stop', 'off']) {
   write(`trayTemplate${suffix}.png`, render(16, templateShade(state)));
   write(`trayTemplate${suffix}@2x.png`, render(32, templateShade(state)));
   write(`tray${suffix}.png`, render(32, colourShade(state)));
+}
+for (const state of [null, 'ok', 'wait', 'err', 'run', 'stop', 'off']) {
+  for (const theme of ['light', 'dark']) {
+    const base = `trayMac${state ? `-${state}` : ''}-${theme}`;
+    write(`${base}.png`, render(16, macColourShade(state, theme === 'dark')));
+    write(`${base}@2x.png`, render(32, macColourShade(state, theme === 'dark')));
+  }
 }
 write('icon.png', render(512, colourShade(null, 0.08)));
