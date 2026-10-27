@@ -1,6 +1,6 @@
 {
   "name": "lambda-wp-viewer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Read-only Modbus TCP viewer for LAMBDA heat pumps (Electron)",
   "main": "src/main.js",
   "scripts": {
