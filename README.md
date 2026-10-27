@@ -88,7 +88,7 @@ The app can keep reading and saving data without its window, so the charts show 
 
 - **Keep collecting when the window is closed** (Settings → *Background collection*, on by default):
   - Closing the window only closes the UI. Polling and saving to the data folder continue.
-  - A heat pump icon stays in the **menu bar** (macOS) or **taskbar notification area** (Windows/Linux). On macOS the dock icon also stays.
+  - A heat pump icon stays in the **menu bar** (macOS) or **taskbar notification area** (Windows/Linux). On macOS the dock icon is hidden while no window is open and returns when you open the window.
   - The icon shows the state: dot colour = state: green = heat pump running, blue = stopped, grey = disconnected or not collecting, red = saving error.
   - **Tray menu:**
     - Status and last save time

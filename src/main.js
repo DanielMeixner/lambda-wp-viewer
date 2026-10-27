@@ -151,7 +151,7 @@ function showWindow() {
   } else {
     createWindow();
   }
-  if (process.platform === 'darwin') app.dock?.show();
+  if (process.platform === 'darwin') app.dock?.show().then(() => app.dock.setIcon(nativeImage.createFromPath(path.join(ASSETS, 'icon.png')))).catch(() => {});
   updateTray(true);
 }
 
@@ -436,6 +436,7 @@ function createWindow() {
   win.on('closed', () => {
     win = null;
     applyPollInterval();
+    if (config.runInBackground && !quitting && process.platform === 'darwin') app.dock?.hide();
     if (config.runInBackground && !quitting) backgroundHint();
     updateTray(true);
   });
@@ -472,6 +473,7 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('resume', () => service.wake());
     powerMonitor.on('unlock-screen', () => service.wake());
     if (!startedInBackground) createWindow();
+    else if (process.platform === 'darwin') app.dock?.hide();
   });
 
   app.on('before-quit', () => { quitting = true; });
